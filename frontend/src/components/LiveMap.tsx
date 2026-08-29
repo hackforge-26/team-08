@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { cacheImdAlerts, getCachedImdAlerts } from '../utils/offlineStore';
 
 // Fix for default marker icons in react-leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -27,7 +28,7 @@ const complaintIcon = new L.DivIcon({
   iconAnchor: [8, 8]
 });
 
-// Custom icons for official IMD weather alert markers
+// Custom icons for official IMD weather alert markers across India
 const imdRedIcon = new L.DivIcon({
   className: 'custom-div-icon',
   html: `<div class="w-5 h-5 bg-red-600 rounded-full animate-ping absolute opacity-75"></div><div class="w-5 h-5 bg-red-600 rounded-full relative border-2 border-white flex items-center justify-center text-[10px] font-bold text-white shadow-lg">⚡</div>`,
@@ -49,23 +50,33 @@ const imdYellowIcon = new L.DivIcon({
   iconAnchor: [10, 10]
 });
 
-function ChangeView({ center }: { center: [number, number] }) {
+const imdGreenIcon = new L.DivIcon({
+  className: 'custom-div-icon',
+  html: `<div class="w-5 h-5 bg-emerald-500 rounded-full relative border-2 border-white flex items-center justify-center text-[10px] font-bold text-white shadow-lg">✓</div>`,
+  iconSize: [20, 20],
+  iconAnchor: [10, 10]
+});
+
+const INDIA_CENTER: [number, number] = [20.5937, 78.9629]; // Geographic center of India
+
+function ChangeView({ center, zoom }: { center: [number, number]; zoom: number }) {
   const map = useMap();
   useEffect(() => {
-    map.flyTo(center, 13);
-  }, [center, map]);
+    map.flyTo(center, zoom);
+  }, [center, zoom, map]);
   return null;
 }
 
 export default function LiveMap() {
-  const [position, setPosition] = React.useState<[number, number] | null>(null);
+  const [targetView, setTargetView] = React.useState<{ center: [number, number]; zoom: number }>({
+    center: INDIA_CENTER,
+    zoom: 5
+  });
   const [isLoading, setIsLoading] = React.useState(true);
   const [incidents, setIncidents] = React.useState<any[]>([]);
   const [imdAlerts, setImdAlerts] = React.useState<any[]>([]);
   const [imdError, setImdError] = React.useState<boolean>(false);
   const [lastImdSync, setLastImdSync] = React.useState<string | null>(null);
-
-  const defaultCenter: [number, number] = [13.0447, 74.9785]; // India coastal regional center fallback
 
   React.useEffect(() => {
     const fetchData = async () => {
@@ -86,38 +97,48 @@ export default function LiveMap() {
           setImdAlerts(alertData);
           setImdError(false);
           setLastImdSync(new Date().toLocaleTimeString());
+          await cacheImdAlerts(alertData);
+        } else {
+          throw new Error("IMD response error");
+        }
+      } catch (err) {
+        console.warn("Failed to fetch live IMD alerts, falling back to cached IndexedDB store:", err);
+        const cached = await getCachedImdAlerts();
+        if (cached && cached.length > 0) {
+          setImdAlerts(cached);
+          setImdError(true);
         } else {
           setImdError(true);
         }
-      } catch (err) {
-        console.warn("Failed to fetch IMD alerts", err);
-        setImdError(true);
+      } finally {
+        setIsLoading(false);
       }
     };
 
     fetchData();
     const interval = setInterval(fetchData, 3000);
-    
+    return () => clearInterval(interval);
+  }, []);
+
+  const [userLocation, setUserLocation] = React.useState<[number, number] | null>(null);
+
+  React.useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setPosition([pos.coords.latitude, pos.coords.longitude]);
-          setIsLoading(false);
+          setUserLocation([pos.coords.latitude, pos.coords.longitude]);
         },
         (err) => {
-          console.error("Error getting location:", err);
-          setPosition(defaultCenter);
-          setIsLoading(false);
+          console.warn("Geolocation warning:", err);
         },
         { timeout: 5000 }
       );
-    } else {
-      setPosition(defaultCenter);
-      setIsLoading(false);
     }
-    
-    return () => clearInterval(interval);
   }, []);
+
+  const handleResetToIndia = () => {
+    setTargetView({ center: INDIA_CENTER, zoom: 5 });
+  };
 
   const userLocationIcon = new L.DivIcon({
     className: 'custom-div-icon',
@@ -131,7 +152,8 @@ export default function LiveMap() {
       case 'red': return '#ef4444';
       case 'orange': return '#f97316';
       case 'yellow': return '#eab308';
-      default: return '#22c55e';
+      case 'green': return '#10b981';
+      default: return '#10b981';
     }
   };
 
@@ -139,7 +161,8 @@ export default function LiveMap() {
     switch (level?.toLowerCase()) {
       case 'red': return imdRedIcon;
       case 'orange': return imdOrangeIcon;
-      default: return imdYellowIcon;
+      case 'yellow': return imdYellowIcon;
+      default: return imdGreenIcon;
     }
   };
 
@@ -148,7 +171,7 @@ export default function LiveMap() {
       <div className="w-full h-full min-h-[400px] rounded-xl border border-slate-800 bg-slate-900 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-slate-400">
           <div className="w-8 h-8 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin"></div>
-          <p className="text-sm font-medium">Acquiring satellite lock & IMD feeds...</p>
+          <p className="text-sm font-medium">Acquiring satellite lock & Nationwide IMD feeds...</p>
         </div>
       </div>
     );
@@ -156,43 +179,52 @@ export default function LiveMap() {
 
   return (
     <div className="w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-slate-800 shadow-2xl relative z-0" style={{ height: '100%' }}>
+      {/* "View Entire India" Quick Navigation Button */}
+      <button
+        onClick={handleResetToIndia}
+        className="absolute top-3 left-3 z-[1000] bg-slate-950/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-lg shadow-xl flex items-center gap-1.5 transition-all"
+        title="Reset map view to entire India"
+      >
+        <span>📍 View Entire India</span>
+      </button>
+
       {/* IMD Data Status Badge */}
       <div className="absolute top-3 right-3 z-[1000] bg-slate-950/80 backdrop-blur-md border border-slate-800 px-3 py-1.5 rounded-lg text-[11px] font-medium text-slate-300 shadow-xl flex items-center gap-2">
         {imdError ? (
           <span className="text-amber-400 font-bold flex items-center gap-1">
-            ⚠️ IMD alerts temporarily unavailable
+            ⚠️ IMD feed temporarily unavailable — showing last verified update
           </span>
         ) : (
           <span className="text-emerald-400 font-bold flex items-center gap-1">
-            ⚡ India Meteorological Dept (IMD) Live Feed {lastImdSync && `(${lastImdSync})`}
+            ⚡ India Meteorological Dept (IMD) — Nationwide Live Feed {lastImdSync && `(${lastImdSync})`}
           </span>
         )}
       </div>
 
       <MapContainer 
-        center={position || defaultCenter} 
-        zoom={12} 
+        center={targetView.center} 
+        zoom={targetView.zoom} 
         style={{ height: '100%', width: '100%', minHeight: '400px' }}
         className="bg-slate-900"
         zoomControl={false}
       >
-        <ChangeView center={position || defaultCenter} />
+        <ChangeView center={targetView.center} zoom={targetView.zoom} />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           className="map-tiles"
         />
-        
-        {/* User's Current Location */}
-        {position && (
-          <Marker position={position} icon={userLocationIcon}>
+
+        {/* User's Detected Location */}
+        {userLocation && (
+          <Marker position={userLocation} icon={userLocationIcon}>
             <Popup className="custom-popup">
-              <div className="p-1 font-bold text-slate-800">Your Current Location</div>
+              <div className="p-1 font-bold text-slate-800">Your Current Detected Location</div>
             </Popup>
           </Marker>
         )}
 
-        {/* Official India Meteorological Department (IMD) Alerts & Overlays */}
+        {/* Official India Meteorological Department (IMD) Alerts & Overlays Across All States */}
         {imdAlerts.map((alert) => {
           const color = getImdColor(alert.color_level);
           return (
@@ -213,7 +245,7 @@ export default function LiveMap() {
                 icon={getImdIcon(alert.color_level)}
               >
                 <Popup className="custom-popup">
-                  <div className="p-2 text-slate-900 space-y-1.5 min-w-[220px]">
+                  <div className="p-2.5 text-slate-900 space-y-1.5 min-w-[240px]">
                     <div className="flex items-center justify-between border-b pb-1">
                       <span className="font-bold text-xs uppercase text-slate-700">⚡ IMD ALERT</span>
                       <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: color }}>
@@ -221,14 +253,17 @@ export default function LiveMap() {
                       </span>
                     </div>
                     <div className="font-bold text-sm text-slate-900">{alert.type}</div>
-                    <div className="text-xs text-slate-600"><strong>Area:</strong> {alert.affected_area}</div>
+                    <div className="text-xs text-slate-700">
+                      <strong>State:</strong> {alert.state || 'India'} | <strong>District:</strong> {alert.district || alert.affected_area}
+                    </div>
+                    <div className="text-xs text-slate-600"><strong>Affected Area:</strong> {alert.affected_area}</div>
                     <div className="text-xs text-slate-600"><strong>Issued:</strong> {alert.issue_time}</div>
                     <div className="text-xs text-slate-600"><strong>Valid Until:</strong> {alert.valid_until}</div>
-                    <div className="text-xs text-slate-700 bg-slate-100 p-1.5 rounded border border-slate-200">
-                      <strong>Public Action:</strong> {alert.recommended_action}
+                    <div className="text-xs text-slate-800 bg-slate-100 p-2 rounded border border-slate-200 leading-snug">
+                      <strong>Public Safety Action:</strong> {alert.recommended_action}
                     </div>
                     <div className="text-[10px] text-slate-500 pt-1 flex items-center justify-between border-t">
-                      <span>Source: IMD</span>
+                      <span>Official Source: IMD</span>
                       <a href="https://mausam.imd.gov.in" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-semibold">
                         mausam.imd.gov.in
                       </a>
@@ -269,7 +304,7 @@ export default function LiveMap() {
       {/* Map Legend */}
       <div className="absolute bottom-4 right-4 z-[1000] bg-slate-950/90 backdrop-blur-md border border-slate-800 p-3 rounded-xl text-xs space-y-2 text-slate-300 shadow-2xl">
         <div className="font-bold text-slate-100 uppercase tracking-wider text-[10px] border-b border-slate-800 pb-1 mb-1">
-          Map Legend
+          Nationwide Map Legend
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-red-600 border border-white"></div>
@@ -286,6 +321,10 @@ export default function LiveMap() {
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-yellow-500 text-[8px] flex items-center justify-center font-bold text-slate-900">⚡</div>
           <span>IMD Yellow Alert (Watch)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-emerald-500 text-[8px] flex items-center justify-center font-bold text-white">✓</div>
+          <span>IMD Green Area (No Warning)</span>
         </div>
       </div>
     </div>

@@ -26,8 +26,9 @@ export interface OfflineIncident {
 }
 
 const DB_NAME = 'ResQOfflineDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'offline_incidents';
+const IMD_STORE_NAME = 'imd_alerts';
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -39,6 +40,9 @@ function openDB(): Promise<IDBDatabase> {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         store.createIndex('sync_status', 'sync_status', { unique: false });
         store.createIndex('created_at', 'created_at', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(IMD_STORE_NAME)) {
+        db.createObjectStore(IMD_STORE_NAME, { keyPath: 'id' });
       }
     };
 
@@ -140,4 +144,26 @@ export async function cacheOnlineIncidents(serverIncidents: any[]): Promise<void
     };
     store.put(offlineItem);
   }
+}
+
+export async function cacheImdAlerts(alerts: any[]): Promise<void> {
+  const db = await openDB();
+  const tx = db.transaction(IMD_STORE_NAME, 'readwrite');
+  const store = tx.objectStore(IMD_STORE_NAME);
+
+  for (const alert of alerts) {
+    store.put(alert);
+  }
+}
+
+export async function getCachedImdAlerts(): Promise<any[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IMD_STORE_NAME, 'readonly');
+    const store = tx.objectStore(IMD_STORE_NAME);
+    const request = store.getAll();
+
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = (e: any) => reject(e.target.error);
+  });
 }
