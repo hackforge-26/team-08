@@ -3,6 +3,7 @@ import { Activity, ShieldAlert, Clock, Users, MapPin, CheckCircle, Phone, Extern
 import LiveMap from './LiveMap';
 import { HELPER_CONTACT_NAME, HELPER_PHONE_NUMBER } from '../config';
 import { formatIncidentTime } from '../utils/dateFormatter';
+import { getAllOfflineIncidents, cacheOnlineIncidents, type OfflineIncident } from '../utils/offlineStore';
 
 export default function CommandCenter() {
   const [selectedIncident, setSelectedIncident] = useState<any>(null);
@@ -13,27 +14,98 @@ export default function CommandCenter() {
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    const fetchIncidents = async () => {
-      try {
-        const res = await fetch('http://localhost:8000/incidents');
-        const data = await res.json();
-        setIncidents(data);
-        // Sync selected incident if updated
-        if (selectedIncident) {
-          const updated = data.find((inc: any) => inc.id === selectedIncident.id);
-          if (updated) setSelectedIncident(updated);
+  const loadCombinedIncidents = async () => {
+    try {
+      let serverIncidents: any[] = [];
+      let isOnline = navigator.onLine;
+
+      if (isOnline) {
+        try {
+          const res = await fetch('http://localhost:8000/incidents');
+          if (res.ok) {
+            serverIncidents = await res.json();
+            await cacheOnlineIncidents(serverIncidents);
+          }
+        } catch (e) {
+          isOnline = false;
         }
-      } catch (err) {
-        console.error("Failed to fetch incidents", err);
       }
+
+      const offlineItems = await getAllOfflineIncidents();
+      
+      // Convert offline IndexedDB items to dashboard format
+      const formattedOffline = offlineItems.map((item: OfflineIncident) => {
+        let photo_url = item.photo_url;
+        if (!photo_url && item.photo_blob) {
+          photo_url = URL.createObjectURL(item.photo_blob);
+        }
+        let audio_url = item.audio_url;
+        if (!audio_url && item.audio_blob) {
+          audio_url = URL.createObjectURL(item.audio_blob);
+        }
+
+        return {
+          id: item.id,
+          type: item.type,
+          severity: item.severity || 'MEDIUM',
+          status: item.status || 'REPORTED',
+          location: { lat: item.lat, lng: item.lng },
+          description: item.description,
+          reports_count: 1,
+          created_at: item.created_at || item.time,
+          time: item.created_at || item.time,
+          photo_url,
+          audio_url,
+          sync_status: item.sync_status,
+          notified: item.notified,
+          notified_at: item.notified_at,
+          email_sent: item.email_sent,
+          email_sent_at: item.email_sent_at
+        };
+      });
+
+      // Merge: server incidents + pending offline incidents not in server list
+      const serverIds = new Set(serverIncidents.map(i => i.id));
+      const pendingOnly = formattedOffline.filter(i => i.sync_status === 'pending' && !serverIds.has(i.id));
+
+      const combined = [...pendingOnly, ...serverIncidents];
+      setIncidents(combined);
+
+      if (selectedIncident) {
+        const updated = combined.find((inc: any) => inc.id === selectedIncident.id);
+        if (updated) setSelectedIncident(updated);
+      }
+    } catch (err) {
+      console.error("Error loading combined incidents:", err);
+    }
+  };
+
+  React.useEffect(() => {
+    loadCombinedIncidents();
+    const interval = setInterval(loadCombinedIncidents, 3000);
+
+    const handleSyncComplete = () => {
+      loadCombinedIncidents();
     };
-    fetchIncidents();
-    const interval = setInterval(fetchIncidents, 3000);
-    return () => clearInterval(interval);
+
+    window.addEventListener('resq-sync-complete', handleSyncComplete);
+    window.addEventListener('online', loadCombinedIncidents);
+    window.addEventListener('offline', loadCombinedIncidents);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('resq-sync-complete', handleSyncComplete);
+      window.removeEventListener('online', loadCombinedIncidents);
+      window.removeEventListener('offline', loadCombinedIncidents);
+    };
   }, [selectedIncident?.id]);
 
   const handleNotifyHelper = async (incidentId: string) => {
+    if (!navigator.onLine) {
+      setNotificationError("Offline — Notification pending connection.");
+      return;
+    }
+
     setIsNotifying(true);
     setNotificationError(null);
     try {
@@ -54,6 +126,11 @@ export default function CommandCenter() {
   };
 
   const handleSendEmailAlert = async (incidentId: string) => {
+    if (!navigator.onLine) {
+      setEmailError("Offline — Email pending connection.");
+      return;
+    }
+
     setIsSendingEmail(true);
     setEmailError(null);
     try {
@@ -97,9 +174,16 @@ export default function CommandCenter() {
               >
                 <div className="flex justify-between items-start mb-2">
                   <span className="text-xs font-mono text-slate-400">{incident.id}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${incident.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : incident.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400' : incident.severity === 'LOW' ? 'bg-purple-500/20 text-purple-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                    {incident.severity}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {incident.sync_status === 'pending' && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        🟠 Pending Sync
+                      </span>
+                    )}
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${incident.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : incident.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400' : incident.severity === 'LOW' ? 'bg-purple-500/20 text-purple-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                      {incident.severity}
+                    </span>
+                  </div>
                 </div>
                 <h4 className="font-medium text-slate-200 text-sm mb-1">{incident.type}</h4>
                 <div className="flex items-center text-xs text-slate-400 gap-1.5">

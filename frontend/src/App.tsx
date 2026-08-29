@@ -7,6 +7,19 @@ import CitizenPortal from './components/CitizenPortal';
 import CitizenDashboard from './components/CitizenDashboard';
 
 function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const [isOnline, setIsOnline] = React.useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-50 overflow-hidden">
       {/* Sidebar */}
@@ -35,9 +48,18 @@ function DashboardLayout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 flex flex-col h-full relative">
         <header className="h-16 border-b border-slate-800 flex items-center px-6 justify-between bg-slate-900/50 backdrop-blur-md">
           <h2 className="text-lg font-medium">System Dashboard</h2>
-          <div className="flex items-center gap-4">
-            <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
-            <span className="text-sm text-slate-400">System Online</span>
+          <div className="flex items-center gap-3">
+            {isOnline ? (
+              <div className="flex items-center gap-2 text-green-400 border border-green-500/30 bg-green-500/10 px-3 py-1 rounded-full text-xs font-semibold">
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+                <span>🟢 Online</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-amber-400 border border-amber-500/30 bg-amber-500/10 px-3 py-1 rounded-full text-xs font-semibold">
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></div>
+                <span>🟠 Offline — Emergency mode</span>
+              </div>
+            )}
           </div>
         </header>
         

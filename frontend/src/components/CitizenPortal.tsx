@@ -1,10 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { Camera, MapPin, Mic, Send, AlertTriangle, X, ExternalLink, Loader2, Check, Image as ImageIcon } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
+import { saveOfflineIncident, type OfflineIncident } from '../utils/offlineStore';
 
 export default function CitizenPortal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [isOfflineSaved, setIsOfflineSaved] = useState(false);
   
   // Audio recording states
   const [isRecording, setIsRecording] = useState(false);
@@ -37,7 +39,24 @@ export default function CitizenPortal() {
     return `${mins}:${secs}`;
   };
 
-  // Start real microphone voice recording
+  const getSupportedMimeType = (): string => {
+    const candidateTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/aac',
+      'audio/ogg;codecs=opus',
+      'audio/wav'
+    ];
+    for (const t of candidateTypes) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+        return t;
+      }
+    }
+    return '';
+  };
+
+  // Start real microphone voice recording with dynamic browser format detection
   const startRecording = async () => {
     setAudioError(null);
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -48,8 +67,12 @@ export default function CitizenPortal() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+
+      const mimeType = getSupportedMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
+      const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -58,10 +81,11 @@ export default function CitizenPortal() {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(audioChunksRef.current, { type: actualMime });
         setAudioBlob(blob);
-        setAudioUrl(URL.createObjectURL(blob));
-        // Stop microphone stream tracks
+        const url = URL.createObjectURL(blob);
+        setAudioUrl(url);
+        // Stop microphone stream tracks cleanly
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -72,7 +96,6 @@ export default function CitizenPortal() {
       timerIntervalRef.current = setInterval(() => {
         setRecordingDuration((prev) => {
           if (prev >= 60) {
-            // Auto stop after 60 seconds max
             stopRecording();
             return 60;
           }
@@ -127,13 +150,11 @@ export default function CitizenPortal() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate type
     if (!file.type.startsWith('image/')) {
       setPhotoError('Only image files (JPG, PNG, WebP, etc.) are allowed.');
       return;
     }
 
-    // Validate 10 MB size limit
     if (file.size > 10 * 1024 * 1024) {
       setPhotoError('File size exceeds the 10 MB limit.');
       return;
@@ -206,12 +227,39 @@ export default function CitizenPortal() {
       'Other': 'MEDIUM'
     };
 
+    const nowIso = new Date().toISOString();
+
+    if (!navigator.onLine) {
+      const offlineItem: OfflineIncident = {
+        id: `INC-OFFLINE-${Date.now().toString().slice(-6)}`,
+        type: reportType,
+        severity: severityMap[reportType] || 'MEDIUM',
+        status: 'REPORTED',
+        description,
+        lat: coords ? coords.lat : 40.7128,
+        lng: coords ? coords.lng : -74.0060,
+        reporter_email: email || undefined,
+        photo_blob: photoFile,
+        photo_name: photoFile?.name,
+        audio_blob: audioBlob,
+        audio_name: 'voice-recording.webm',
+        created_at: nowIso,
+        time: nowIso,
+        sync_status: 'pending'
+      };
+      await saveOfflineIncident(offlineItem);
+      setIsOfflineSaved(true);
+      setIsSubmitting(false);
+      setSubmitted(true);
+      return;
+    }
+
     const formData = new FormData();
     formData.append('type', reportType);
     formData.append('severity', severityMap[reportType] || 'MEDIUM');
     formData.append('status', 'REPORTED');
     formData.append('description', description);
-    formData.append('created_at', new Date().toISOString());
+    formData.append('created_at', nowIso);
     if (email) formData.append('reporter_email', email);
     
     if (coords) {
@@ -228,20 +276,43 @@ export default function CitizenPortal() {
     }
 
     try {
-      await fetch('http://localhost:8000/incidents', {
+      const res = await fetch('http://localhost:8000/incidents', {
         method: 'POST',
         body: formData
       });
+      if (!res.ok) throw new Error("Server error");
+      setIsOfflineSaved(false);
       setIsSubmitting(false);
       setSubmitted(true);
     } catch (err) {
-      console.error("Failed to submit", err);
+      console.warn("Network request failed, saving incident locally to IndexedDB:", err);
+      const offlineItem: OfflineIncident = {
+        id: `INC-OFFLINE-${Date.now().toString().slice(-6)}`,
+        type: reportType,
+        severity: severityMap[reportType] || 'MEDIUM',
+        status: 'REPORTED',
+        description,
+        lat: coords ? coords.lat : 40.7128,
+        lng: coords ? coords.lng : -74.0060,
+        reporter_email: email || undefined,
+        photo_blob: photoFile,
+        photo_name: photoFile?.name,
+        audio_blob: audioBlob,
+        audio_name: 'voice-recording.webm',
+        created_at: nowIso,
+        time: nowIso,
+        sync_status: 'pending'
+      };
+      await saveOfflineIncident(offlineItem);
+      setIsOfflineSaved(true);
       setIsSubmitting(false);
+      setSubmitted(true);
     }
   };
 
   const resetForm = () => {
     setSubmitted(false);
+    setIsOfflineSaved(false);
     setDescription('');
     handleRemovePhoto();
     handleDeleteAudio();
@@ -251,17 +322,21 @@ export default function CitizenPortal() {
 
   if (submitted) {
     return (
-      <div className="max-w-xl mx-auto mt-12 bg-slate-900 border border-green-500/30 rounded-2xl p-8 text-center">
-        <div className="w-16 h-16 bg-green-500/20 text-green-400 rounded-full flex items-center justify-center mx-auto mb-4">
-          <Send className="w-8 h-8" />
+      <div className={`max-w-xl mx-auto mt-12 bg-slate-900 border ${isOfflineSaved ? 'border-amber-500/40' : 'border-green-500/30'} rounded-2xl p-8 text-center shadow-2xl`}>
+        <div className={`w-16 h-16 ${isOfflineSaved ? 'bg-amber-500/20 text-amber-400' : 'bg-green-500/20 text-green-400'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+          {isOfflineSaved ? <Check className="w-8 h-8 text-amber-400" /> : <Send className="w-8 h-8" />}
         </div>
-        <h2 className="text-2xl font-bold text-slate-100 mb-2">Report Received</h2>
-        <p className="text-slate-400 mb-6">
-          Your emergency report has been sent to the ResQAI Command Center. AI analysis is currently processing the details to dispatch the appropriate response teams.
+        <h2 className={`text-2xl font-bold ${isOfflineSaved ? 'text-amber-300' : 'text-slate-100'} mb-2`}>
+          {isOfflineSaved ? '✓ Emergency Report Saved Offline' : 'Report Received'}
+        </h2>
+        <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+          {isOfflineSaved
+            ? 'Your report will be automatically sent when network coverage returns.'
+            : 'Your emergency report has been sent to the ResQAI Command Center. AI analysis is currently processing the details.'}
         </p>
         <button 
           onClick={resetForm}
-          className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-medium transition-colors"
+          className={`px-6 py-3 bg-slate-800 hover:bg-slate-700 ${isOfflineSaved ? 'text-amber-300 border border-amber-500/30' : 'text-slate-200'} rounded-lg font-bold text-sm transition-colors`}
         >
           Submit Another Report
         </button>
