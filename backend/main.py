@@ -272,7 +272,17 @@ def get_imd_alerts():
     ]
     return alerts
 
-def dispatch_command_center_email(incident: Incident) -> dict:
+def dispatch_command_center_email(incident: Incident, force_retry: bool = False) -> dict:
+    if incident.email_sent and not force_retry:
+        return {
+            "success": True,
+            "already_sent": True,
+            "recipient": COMMAND_CENTER_EMAIL,
+            "email_sent_at": incident.email_sent_at,
+            "email_delivered": True,
+            "message": "Email alert was already sent for this incident."
+        }
+
     now_iso = datetime.now(timezone.utc).isoformat()
     incident_time = incident.created_at or incident.time or now_iso
     
@@ -309,6 +319,8 @@ def dispatch_command_center_email(incident: Incident) -> dict:
     smtp_pass = os.environ.get("SMTP_PASSWORD")
     
     email_delivered = False
+    error_detail = None
+
     if smtp_server and smtp_user and smtp_pass:
         try:
             import smtplib
@@ -326,22 +338,36 @@ def dispatch_command_center_email(incident: Incident) -> dict:
                 server.login(smtp_user, smtp_pass)
                 server.send_message(msg)
             email_delivered = True
+            print(f"[COMMAND CENTRE EMAIL SUCCESS] Email delivered via SMTP to {recipient}")
         except Exception as e:
-            print(f"[COMMAND CENTRE EMAIL ERROR] Failed to send SMTP email to Command Centre: {e}")
-    
-    print(f"\n================ COMMAND CENTRE EMAIL NOTIFICATION ================\nRecipient: {recipient}\nSubject: {subject}\n\n{body}\n==================================================================\n")
-    
-    incident.email_sent = True
-    incident.email_sent_at = now_iso
-    
-    return {
-        "success": True,
-        "recipient": recipient,
-        "email_sent_at": now_iso,
-        "subject": subject,
-        "body": body,
-        "email_delivered": email_delivered
-    }
+            error_detail = f"SMTP error: {e}"
+            print(f"[COMMAND CENTRE EMAIL ERROR] Failed to send SMTP email to {recipient}: {e}")
+    else:
+        error_detail = "SMTP environment credentials not configured (Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD)"
+        print(f"[COMMAND CENTRE EMAIL LOG] Recipient: {recipient}\nSubject: {subject}\n{body}")
+
+    if email_delivered:
+        incident.email_sent = True
+        incident.email_sent_at = now_iso
+        return {
+            "success": True,
+            "recipient": recipient,
+            "email_sent_at": now_iso,
+            "subject": subject,
+            "body": body,
+            "email_delivered": True,
+            "already_sent": False
+        }
+    else:
+        incident.email_sent = False
+        return {
+            "success": False,
+            "recipient": recipient,
+            "email_delivered": False,
+            "already_sent": False,
+            "error": error_detail,
+            "message": f"Email delivery pending/failed: {error_detail}"
+        }
 
 @app.post("/incidents")
 async def create_incident(
@@ -583,15 +609,19 @@ async def send_email_alert(incident_id: str):
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     
-    res = dispatch_command_center_email(incident)
+    res = dispatch_command_center_email(incident, force_retry=True)
+    if not res.get("email_delivered", False) and not res.get("already_sent", False):
+        raise HTTPException(status_code=500, detail=res.get("error", "Email delivery failed"))
+    
     return {
         "success": True,
         "message": f"Command Centre email alert sent to {res['recipient']}",
         "recipient": res['recipient'],
-        "email_sent_at": res['email_sent_at'],
-        "subject": res['subject'],
-        "body": res['body'],
-        "email_delivered": res['email_delivered'],
+        "email_sent_at": res.get('email_sent_at'),
+        "subject": res.get('subject'),
+        "body": res.get('body'),
+        "email_delivered": res.get('email_delivered', False),
+        "already_sent": res.get('already_sent', False),
         "incident": incident
     }
 

@@ -202,15 +202,23 @@ export default function CommandCenter() {
                     <Clock className="w-3 h-3 text-slate-500 flex-shrink-0" />
                     <span className="truncate">{formatIncidentTime(incident.created_at || incident.time)}</span>
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
                     {incident.notified && (
                       <div className="text-[10px] font-semibold text-green-400 flex items-center gap-0.5">
                         <Check className="w-3 h-3" /> Helper Notified
                       </div>
                     )}
-                    {incident.email_sent && (
-                      <div className="text-[10px] font-semibold text-blue-400 flex items-center gap-0.5">
-                        <Mail className="w-3 h-3" /> Email Sent
+                    {incident.email_sent ? (
+                      <div className="text-[10px] font-semibold text-emerald-400 flex items-center gap-0.5">
+                        <Mail className="w-3 h-3 text-emerald-400" /> ✓ Email Sent
+                      </div>
+                    ) : incident.sync_status === 'pending' ? (
+                      <div className="text-[10px] font-semibold text-amber-400 flex items-center gap-0.5">
+                        <Mail className="w-3 h-3 text-amber-400" /> ⚠ Email Pending
+                      </div>
+                    ) : (
+                      <div className="text-[10px] font-semibold text-red-400 flex items-center gap-0.5">
+                        <Mail className="w-3 h-3 text-red-400" /> ✕ Email Failed
                       </div>
                     )}
                   </div>
@@ -341,22 +349,35 @@ export default function CommandCenter() {
                 <div className="pt-2 border-t border-slate-800/80">
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
                     <Mail className="w-3.5 h-3.5 text-blue-400" />
-                    <span>📧 Email Notification</span>
+                    <span>📧 Command Centre Email Alert</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Send emergency details via email</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Target: <strong className="text-slate-200 font-mono">shreyasbpalan5@gmail.com</strong></p>
                   
                   {selectedIncident.email_sent ? (
-                    <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded-lg text-center">
-                      <div className="flex items-center justify-center gap-1.5 text-green-400 font-bold text-xs">
+                    <div className="mt-2 p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-center">
+                      <div className="flex items-center justify-center gap-1.5 text-emerald-400 font-bold text-xs">
                         <Check className="w-3.5 h-3.5" />
-                        <span>✓ Email Alert Sent</span>
+                        <span>✓ Email Sent</span>
                       </div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
                         Sent: {formatIncidentTime(selectedIncident.email_sent_at)}
                       </div>
                     </div>
+                  ) : selectedIncident.sync_status === 'pending' ? (
+                    <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-center">
+                      <div className="flex items-center justify-center gap-1.5 text-amber-400 font-bold text-xs">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>⚠ Email Pending (Offline)</span>
+                      </div>
+                    </div>
                   ) : (
-                    <div className="mt-2">
+                    <div className="mt-2 space-y-1.5">
+                      <div className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-center">
+                        <div className="flex items-center justify-center gap-1.5 text-red-400 font-bold text-xs">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>✕ Email Failed</span>
+                        </div>
+                      </div>
                       <button 
                         onClick={() => handleSendEmailAlert(selectedIncident.id)}
                         disabled={isSendingEmail}
@@ -371,20 +392,14 @@ export default function CommandCenter() {
                         ) : (
                           <>
                             <Mail className="w-3.5 h-3.5" />
-                            <span>Send Email Alert</span>
+                            <span>Retry Email Alert</span>
                           </>
                         )}
                       </button>
 
                       {emailError && (
-                        <div className="mt-1.5 p-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between text-[11px] text-red-400">
-                          <span>⚠ {emailError}</span>
-                          <button 
-                            onClick={() => handleSendEmailAlert(selectedIncident.id)} 
-                            className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded font-semibold transition-colors flex-shrink-0"
-                          >
-                            Retry
-                          </button>
+                        <div className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-[11px] text-red-400 text-center">
+                          ⚠ {emailError}
                         </div>
                       )}
                     </div>

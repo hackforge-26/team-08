@@ -12,7 +12,7 @@ export default function CitizenPortal() {
   const [reporterPhone, setReporterPhone] = useState('');
   
   const [citizenEmailStatus, setCitizenEmailStatus] = useState<'sent' | 'failed' | 'pending' | null>(null);
-  const [commandCenterEmailStatus, setCommandCenterEmailStatus] = useState<'sent' | 'failed' | 'retrying' | null>(null);
+  const [commandCenterEmailStatus, setCommandCenterEmailStatus] = useState<'sent' | 'pending' | 'failed' | 'retrying' | null>(null);
   const [lastIncidentId, setLastIncidentId] = useState<string | null>(null);
   
   // Audio recording states
@@ -237,6 +237,7 @@ export default function CitizenPortal() {
     const nowIso = new Date().toISOString();
 
     if (!navigator.onLine) {
+      console.warn("User is offline. Saving report locally to IndexedDB.");
       const offlineItem: OfflineIncident = {
         id: `INC-OFFLINE-${Date.now().toString().slice(-6)}`,
         type: reportType,
@@ -257,6 +258,7 @@ export default function CitizenPortal() {
       };
       await saveOfflineIncident(offlineItem);
       setIsOfflineSaved(true);
+      setCommandCenterEmailStatus('pending');
       setIsSubmitting(false);
       setSubmitted(true);
       return;
@@ -295,7 +297,12 @@ export default function CitizenPortal() {
       if (serverIncident?.id) {
         setLastIncidentId(serverIncident.id);
       }
-      setCommandCenterEmailStatus('sent');
+
+      if (data.command_center_email_sent || serverIncident?.email_sent) {
+        setCommandCenterEmailStatus('sent');
+      } else {
+        setCommandCenterEmailStatus('failed');
+      }
 
       if (email && serverIncident?.id) {
         try {
@@ -336,7 +343,7 @@ export default function CitizenPortal() {
         sync_status: 'pending'
       };
       await saveOfflineIncident(offlineItem);
-      setCommandCenterEmailStatus('failed');
+      setCommandCenterEmailStatus('pending');
       setIsOfflineSaved(true);
       setIsSubmitting(false);
       setSubmitted(true);
@@ -384,7 +391,7 @@ export default function CitizenPortal() {
         </h2>
         <p className="text-slate-300 text-sm mb-4 leading-relaxed">
           {isOfflineSaved
-            ? 'Your report will be automatically sent when network coverage returns.'
+            ? 'Your report will be automatically sent to the Command Centre when network coverage returns.'
             : 'Your emergency report has been sent to the ResQAI Command Center. AI analysis is currently processing the details.'}
         </p>
 
@@ -395,18 +402,21 @@ export default function CitizenPortal() {
             <span className="font-semibold text-slate-200">Command Centre Email (shreyasbpalan5@gmail.com):</span>
           </div>
           {commandCenterEmailStatus === 'sent' && (
-            <span className="font-bold text-green-400 flex items-center gap-1">✓ Email Alert Sent</span>
+            <span className="font-bold text-green-400 flex items-center gap-1">✓ Email Sent</span>
+          )}
+          {commandCenterEmailStatus === 'pending' && (
+            <span className="font-bold text-amber-400 flex items-center gap-1">⚠ Email Pending (Will send on network recovery)</span>
           )}
           {commandCenterEmailStatus === 'retrying' && (
             <span className="font-bold text-blue-400 flex items-center gap-1">⏳ Sending Email...</span>
           )}
           {commandCenterEmailStatus === 'failed' && (
             <div className="flex items-center gap-2 mt-1">
-              <span className="font-bold text-red-400">⚠️ Email Alert Failed</span>
+              <span className="font-bold text-red-400">✕ Email Failed</span>
               {lastIncidentId && (
                 <button
                   onClick={handleRetryCommandCenterEmail}
-                  className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 rounded text-[11px] font-bold"
+                  className="px-2.5 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 rounded text-[11px] font-bold transition-all"
                 >
                   Retry Email
                 </button>
