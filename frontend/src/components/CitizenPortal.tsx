@@ -130,6 +130,7 @@ export default function CitizenPortal() {
     formData.append('severity', severityMap[reportType] || 'MEDIUM');
     formData.append('status', 'REPORTED');
     formData.append('description', description);
+    formData.append('created_at', new Date().toISOString());
     if (email) formData.append('reporter_email', email);
     
     if (coords) {
