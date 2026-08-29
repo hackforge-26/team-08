@@ -272,6 +272,77 @@ def get_imd_alerts():
     ]
     return alerts
 
+def dispatch_command_center_email(incident: Incident) -> dict:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    incident_time = incident.created_at or incident.time or now_iso
+    
+    recipient = COMMAND_CENTER_EMAIL  # shreyasbpalan5@gmail.com
+    subject = f"🚨 ResQAI Command Centre Emergency Alert [{incident.ai_priority or incident.severity}] — {incident.type} ({incident.id})"
+    body = (
+        f"🚨 RESQAI COMMAND CENTRE EMERGENCY REPORT NOTIFICATION\n"
+        f"==========================================================\n\n"
+        f"INCIDENT IDENTIFICATION:\n"
+        f"• Incident ID: {incident.id}\n"
+        f"• Report Type: {incident.type}\n"
+        f"• Current Status: {incident.status}\n"
+        f"• AI Priority Level: {incident.ai_priority or incident.severity}\n"
+        f"• AI Priority Rationale: {incident.ai_priority_reason or 'Emergency indicators detected'}\n"
+        f"• Report Date & Timestamp: {incident_time}\n\n"
+        f"CITIZEN INFORMATION:\n"
+        f"• Citizen Contact Number: {incident.reporter_phone or 'Not provided'}\n"
+        f"• Reporter Email: {incident.reporter_email or 'Not provided'}\n\n"
+        f"GPS LOCATION DETAILS:\n"
+        f"• Coordinates: {incident.location.lat:.4f}, {incident.location.lng:.4f}\n"
+        f"• Google Maps Location Link: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n\n"
+        f"INCIDENT DESCRIPTION:\n"
+        f"{incident.description}\n\n"
+        f"MEDIA EVIDENCE:\n"
+        f"• Attached Photo: {incident.photo_url or 'No photo attached'}\n"
+        f"• Voice Recording: {incident.audio_url or 'No voice recording attached'}\n\n"
+        f"==========================================================\n"
+        f"ResQAI Emergency Command System • Immediate Action Required"
+    )
+    
+    smtp_server = os.environ.get("SMTP_SERVER")
+    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    smtp_user = os.environ.get("SMTP_USERNAME")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+    
+    email_delivered = False
+    if smtp_server and smtp_user and smtp_pass:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = recipient
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain"))
+            
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+            email_delivered = True
+        except Exception as e:
+            print(f"[COMMAND CENTRE EMAIL ERROR] Failed to send SMTP email to Command Centre: {e}")
+    
+    print(f"\n================ COMMAND CENTRE EMAIL NOTIFICATION ================\nRecipient: {recipient}\nSubject: {subject}\n\n{body}\n==================================================================\n")
+    
+    incident.email_sent = True
+    incident.email_sent_at = now_iso
+    
+    return {
+        "success": True,
+        "recipient": recipient,
+        "email_sent_at": now_iso,
+        "subject": subject,
+        "body": body,
+        "email_delivered": email_delivered
+    }
+
 @app.post("/incidents")
 async def create_incident(
     request: Request,
@@ -299,8 +370,15 @@ async def create_incident(
         if "time" not in data or not data["time"]:
             data["time"] = data["created_at"]
         incident = Incident(**data)
+        # Automatically send Command Centre email notification
+        email_res = dispatch_command_center_email(incident)
         incidents_db.insert(0, incident)
-        return {"message": "Incident reported successfully", "incident": incident}
+        return {
+            "message": "Incident reported successfully",
+            "incident": incident,
+            "command_center_email_sent": True,
+            "command_center_recipient": COMMAND_CENTER_EMAIL
+        }
 
     # Upload photo & audio files
     photo_url = None
@@ -329,7 +407,6 @@ async def create_incident(
     incident_desc = description or ""
     timestamp = created_at or now_iso
 
-    # NO INCIDENT MERGING — Every citizen report is saved as an independent incident
     ai_priority, ai_priority_reason = evaluate_ai_priority(
         incident_type,
         incident_desc,
@@ -364,8 +441,16 @@ async def create_incident(
         citizen_email_sent_at=None
     )
     
+    # Automatically send Command Centre email notification to shreyasbpalan5@gmail.com
+    email_res = dispatch_command_center_email(incident)
+    
     incidents_db.insert(0, incident)
-    return {"message": "Incident reported successfully", "incident": incident}
+    return {
+        "message": "Incident reported successfully",
+        "incident": incident,
+        "command_center_email_sent": True,
+        "command_center_recipient": COMMAND_CENTER_EMAIL
+    }
 
 @app.post("/incidents/{incident_id}/send-citizen-email")
 async def send_citizen_email(incident_id: str):
@@ -498,65 +583,15 @@ async def send_email_alert(incident_id: str):
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     
-    now_iso = datetime.now(timezone.utc).isoformat()
-    incident_time = incident.created_at or incident.time or now_iso
-    
-    subject = f"🚨 ResQAI Emergency Alert [{incident.ai_priority or incident.severity}] — {incident.type}"
-    body = (
-        f"🚨 RESQAI EMERGENCY ALERT\n\n"
-        f"Incident Type: {incident.type}\n"
-        f"Incident ID: {incident.id}\n"
-        f"AI Priority: {incident.ai_priority or incident.severity}\n"
-        f"AI Priority Reason: {incident.ai_priority_reason or 'Emergency reported'}\n"
-        f"Citizen Contact: {incident.reporter_phone or 'N/A'}\n"
-        f"Reported Time: {incident_time}\n\n"
-        f"Location Coordinates: {incident.location.lat:.4f}, {incident.location.lng:.4f}\n"
-        f"Google Maps Link: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n\n"
-        f"Description:\n{incident.description}\n\n"
-        f"Attached Photo: {incident.photo_url or 'None'}\n"
-        f"Attached Audio: {incident.audio_url or 'None'}\n\n"
-        f"Please respond immediately."
-    )
-    
-    smtp_server = os.environ.get("SMTP_SERVER")
-    smtp_port = int(os.environ.get("SMTP_PORT", 587))
-    smtp_user = os.environ.get("SMTP_USERNAME")
-    smtp_pass = os.environ.get("SMTP_PASSWORD")
-    
-    email_delivered = False
-    if smtp_server and smtp_user and smtp_pass:
-        try:
-            import smtplib
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
-            
-            msg = MIMEMultipart()
-            msg["From"] = smtp_user
-            msg["To"] = ALERT_EMAIL_TO
-            msg["Subject"] = subject
-            msg.attach(MIMEText(body, "plain"))
-            
-            with smtplib.SMTP(smtp_server, smtp_port) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
-            email_delivered = True
-        except Exception as e:
-            print(f"[EMAIL ERROR] Failed to send SMTP email: {e}")
-    
-    print(f"\n================ EMAIL ALERT NOTIFICATION ================\nTo: {ALERT_EMAIL_TO}\nSubject: {subject}\n\n{body}\n=========================================================\n")
-    
-    incident.email_sent = True
-    incident.email_sent_at = now_iso
-    
+    res = dispatch_command_center_email(incident)
     return {
         "success": True,
-        "message": f"Email alert sent to {ALERT_EMAIL_TO}",
-        "recipient": ALERT_EMAIL_TO,
-        "email_sent_at": now_iso,
-        "subject": subject,
-        "body": body,
-        "email_delivered": email_delivered,
+        "message": f"Command Centre email alert sent to {res['recipient']}",
+        "recipient": res['recipient'],
+        "email_sent_at": res['email_sent_at'],
+        "subject": res['subject'],
+        "body": res['body'],
+        "email_delivered": res['email_delivered'],
         "incident": incident
     }
 

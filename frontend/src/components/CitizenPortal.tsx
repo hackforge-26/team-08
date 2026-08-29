@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Camera, MapPin, Mic, Send, AlertTriangle, X, ExternalLink, Loader2, Check, Image as ImageIcon, Phone } from 'lucide-react';
+import { Camera, MapPin, Mic, Send, AlertTriangle, X, ExternalLink, Loader2, Check, Image as ImageIcon, Phone, Mail } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { saveOfflineIncident, type OfflineIncident } from '../utils/offlineStore';
 
@@ -12,6 +12,8 @@ export default function CitizenPortal() {
   const [reporterPhone, setReporterPhone] = useState('');
   
   const [citizenEmailStatus, setCitizenEmailStatus] = useState<'sent' | 'failed' | 'pending' | null>(null);
+  const [commandCenterEmailStatus, setCommandCenterEmailStatus] = useState<'sent' | 'failed' | 'retrying' | null>(null);
+  const [lastIncidentId, setLastIncidentId] = useState<string | null>(null);
   
   // Audio recording states
   const [isRecording, setIsRecording] = useState(false);
@@ -290,6 +292,10 @@ export default function CitizenPortal() {
       if (!res.ok) throw new Error("Server error");
       const data = await res.json();
       const serverIncident = data.incident;
+      if (serverIncident?.id) {
+        setLastIncidentId(serverIncident.id);
+      }
+      setCommandCenterEmailStatus('sent');
 
       if (email && serverIncident?.id) {
         try {
@@ -330,9 +336,27 @@ export default function CitizenPortal() {
         sync_status: 'pending'
       };
       await saveOfflineIncident(offlineItem);
+      setCommandCenterEmailStatus('failed');
       setIsOfflineSaved(true);
       setIsSubmitting(false);
       setSubmitted(true);
+    }
+  };
+
+  const handleRetryCommandCenterEmail = async () => {
+    if (!lastIncidentId) return;
+    setCommandCenterEmailStatus('retrying');
+    try {
+      const res = await fetch(`http://localhost:8000/incidents/${lastIncidentId}/send-email`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        setCommandCenterEmailStatus('sent');
+      } else {
+        setCommandCenterEmailStatus('failed');
+      }
+    } catch (e) {
+      setCommandCenterEmailStatus('failed');
     }
   };
 
@@ -340,6 +364,8 @@ export default function CitizenPortal() {
     setSubmitted(false);
     setIsOfflineSaved(false);
     setCitizenEmailStatus(null);
+    setCommandCenterEmailStatus(null);
+    setLastIncidentId(null);
     setDescription('');
     handleRemovePhoto();
     handleDeleteAudio();
@@ -362,10 +388,44 @@ export default function CitizenPortal() {
             : 'Your emergency report has been sent to the ResQAI Command Center. AI analysis is currently processing the details.'}
         </p>
 
+        {/* Command Centre Email Delivery Badge */}
+        <div className="mb-4 p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs flex flex-col gap-1 items-center justify-center">
+          <div className="flex items-center gap-2">
+            <Mail className="w-4 h-4 text-blue-400" />
+            <span className="font-semibold text-slate-200">Command Centre Email (shreyasbpalan5@gmail.com):</span>
+          </div>
+          {commandCenterEmailStatus === 'sent' && (
+            <span className="font-bold text-green-400 flex items-center gap-1">✓ Email Alert Sent</span>
+          )}
+          {commandCenterEmailStatus === 'retrying' && (
+            <span className="font-bold text-blue-400 flex items-center gap-1">⏳ Sending Email...</span>
+          )}
+          {commandCenterEmailStatus === 'failed' && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="font-bold text-red-400">⚠️ Email Alert Failed</span>
+              {lastIncidentId && (
+                <button
+                  onClick={handleRetryCommandCenterEmail}
+                  className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 rounded text-[11px] font-bold"
+                >
+                  Retry Email
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         {citizenEmailStatus === 'sent' && (
           <div className="mb-6 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-xs font-semibold text-green-400 flex items-center justify-center gap-2">
             <Check className="w-4 h-4 text-green-400" />
-            <span>Confirmation email sent to {email}</span>
+            <span>Citizen confirmation email sent to {email}</span>
+          </div>
+        )}
+
+        {citizenEmailStatus === 'failed' && (
+          <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs font-semibold text-amber-400 flex items-center justify-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span>Citizen email delivery failed (will retry automatically)</span>
           </div>
         )}
 
