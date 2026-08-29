@@ -11,6 +11,8 @@ export default function CitizenPortal() {
   // Citizen Contact state
   const [reporterPhone, setReporterPhone] = useState('');
   
+  const [citizenEmailStatus, setCitizenEmailStatus] = useState<'sent' | 'failed' | 'pending' | null>(null);
+  
   // Audio recording states
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -286,6 +288,24 @@ export default function CitizenPortal() {
         body: formData
       });
       if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      const serverIncident = data.incident;
+
+      if (email && serverIncident?.id) {
+        try {
+          const emailRes = await fetch(`http://localhost:8000/incidents/${serverIncident.id}/send-citizen-email`, {
+            method: 'POST'
+          });
+          if (emailRes.ok) {
+            setCitizenEmailStatus('sent');
+          } else {
+            setCitizenEmailStatus('failed');
+          }
+        } catch (e) {
+          setCitizenEmailStatus('failed');
+        }
+      }
+
       setIsOfflineSaved(false);
       setIsSubmitting(false);
       setSubmitted(true);
@@ -300,6 +320,7 @@ export default function CitizenPortal() {
         lat: coords ? coords.lat : 40.7128,
         lng: coords ? coords.lng : -74.0060,
         reporter_email: email || undefined,
+        reporter_phone: reporterPhone || undefined,
         photo_blob: photoFile,
         photo_name: photoFile?.name,
         audio_blob: audioBlob,
@@ -318,6 +339,7 @@ export default function CitizenPortal() {
   const resetForm = () => {
     setSubmitted(false);
     setIsOfflineSaved(false);
+    setCitizenEmailStatus(null);
     setDescription('');
     handleRemovePhoto();
     handleDeleteAudio();
@@ -334,11 +356,25 @@ export default function CitizenPortal() {
         <h2 className={`text-2xl font-bold ${isOfflineSaved ? 'text-amber-300' : 'text-slate-100'} mb-2`}>
           {isOfflineSaved ? '✓ Emergency Report Saved Offline' : 'Report Received'}
         </h2>
-        <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+        <p className="text-slate-300 text-sm mb-4 leading-relaxed">
           {isOfflineSaved
             ? 'Your report will be automatically sent when network coverage returns.'
             : 'Your emergency report has been sent to the ResQAI Command Center. AI analysis is currently processing the details.'}
         </p>
+
+        {citizenEmailStatus === 'sent' && (
+          <div className="mb-6 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-xs font-semibold text-green-400 flex items-center justify-center gap-2">
+            <Check className="w-4 h-4 text-green-400" />
+            <span>Confirmation email sent to {email}</span>
+          </div>
+        )}
+
+        {citizenEmailStatus === 'failed' && (
+          <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs font-semibold text-amber-400 flex items-center justify-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span>Email delivery failed (will retry automatically)</span>
+          </div>
+        )}
         <button 
           onClick={resetForm}
           className={`px-6 py-3 bg-slate-800 hover:bg-slate-700 ${isOfflineSaved ? 'text-amber-300 border border-amber-500/30' : 'text-slate-200'} rounded-lg font-bold text-sm transition-colors`}

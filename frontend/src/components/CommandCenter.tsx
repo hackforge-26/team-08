@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, ShieldAlert, Clock, Users, MapPin, CheckCircle, Phone, ExternalLink, AlertCircle, Check, Loader2, Megaphone, Mail, Mic, CloudLightning, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Activity, ShieldAlert, Clock, MapPin, CheckCircle, Phone, ExternalLink, AlertCircle, Check, Loader2, Megaphone, Mail, Mic } from 'lucide-react';
 import LiveMap from './LiveMap';
 import { HELPER_CONTACT_NAME, HELPER_PHONE_NUMBER } from '../config';
 import { formatIncidentTime } from '../utils/dateFormatter';
@@ -8,7 +8,6 @@ import { getAllOfflineIncidents, cacheOnlineIncidents, type OfflineIncident } fr
 export default function CommandCenter() {
   const [selectedIncident, setSelectedIncident] = useState<any>(null);
   const [incidents, setIncidents] = useState<any[]>([]);
-  const [disasterAlerts, setDisasterAlerts] = useState<any[]>([]);
   const [isNotifying, setIsNotifying] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
 
@@ -29,16 +28,6 @@ export default function CommandCenter() {
           }
         } catch (e) {
           isOnline = false;
-        }
-
-        try {
-          const alertRes = await fetch('http://localhost:8000/disaster-alerts');
-          if (alertRes.ok) {
-            const alertData = await alertRes.json();
-            setDisasterAlerts(alertData);
-          }
-        } catch (e) {
-          console.warn("Could not fetch disaster alerts", e);
         }
       }
 
@@ -64,7 +53,6 @@ export default function CommandCenter() {
           description: item.description,
           reports_count: 1,
           reporter_phone: item.reporter_phone,
-          reporter_phones: item.reporter_phone ? [item.reporter_phone] : [],
           created_at: item.created_at || item.time,
           time: item.created_at || item.time,
           photo_url,
@@ -77,13 +65,13 @@ export default function CommandCenter() {
         };
       });
 
-      // Merge: server incidents + pending offline incidents not in server list
+      // Merge server incidents + pending offline incidents
       const serverIds = new Set(serverIncidents.map(i => i.id));
       const pendingOnly = formattedOffline.filter(i => i.sync_status === 'pending' && !serverIds.has(i.id));
 
       const combined = [...pendingOnly, ...serverIncidents];
 
-      // Sort by AI Priority: CRITICAL -> HIGH -> MEDIUM -> LOW
+      // Sort by Priority: CRITICAL -> HIGH -> MEDIUM -> LOW
       const priorityRank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
       combined.sort((a, b) => {
         const rankA = priorityRank[a.ai_priority || a.severity] ?? 2;
@@ -225,11 +213,6 @@ export default function CommandCenter() {
                         <Mail className="w-3 h-3" /> Email Sent
                       </div>
                     )}
-                    {incident.reports_count > 1 && (
-                      <div className="text-[10px] font-semibold text-purple-400 flex items-center gap-0.5 ml-auto">
-                        <Users className="w-3 h-3" /> {incident.reports_count} Merged
-                      </div>
-                    )}
                   </div>
                 </div>
               );
@@ -238,61 +221,9 @@ export default function CommandCenter() {
         </div>
       </div>
 
-      {/* Main Map & AI Disaster Alerts */}
-      <div className="col-span-6 flex flex-col gap-4 overflow-y-auto">
-        <div className="h-96 rounded-xl overflow-hidden border border-slate-800 bg-slate-900 relative">
-          <LiveMap />
-        </div>
-
-        {/* AI Disaster Alerts Panel */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-            <div className="flex items-center gap-2">
-              <CloudLightning className="w-5 h-5 text-amber-400 animate-pulse" />
-              <h3 className="font-bold text-slate-100 text-sm uppercase tracking-wider">🌪️ AI DISASTER ALERTS</h3>
-            </div>
-            <span className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold px-2 py-0.5 rounded">
-              EARLY WARNING SYSTEM
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {disasterAlerts.length === 0 ? (
-              <div className="text-xs text-slate-500 text-center py-2">No elevated disaster risks currently detected.</div>
-            ) : (
-              disasterAlerts.map((alert) => (
-                <div key={alert.id} className="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className={`w-4 h-4 ${alert.risk_level === 'CRITICAL' ? 'text-red-500' : 'text-amber-400'}`} />
-                      <span className="text-sm font-bold text-slate-100">{alert.type}</span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${alert.risk_level === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>
-                        {alert.risk_level} RISK
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
-                      Confidence: {alert.confidence}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
-                    <div><strong className="text-slate-300">Area:</strong> {alert.area}</div>
-                    <div><strong className="text-slate-300">Expected:</strong> {alert.expected_time}</div>
-                  </div>
-
-                  <p className="text-xs text-slate-300 leading-relaxed bg-slate-900/60 p-2 rounded border border-slate-800">
-                    <strong className="text-amber-300">AI Reason:</strong> {alert.reason}
-                  </p>
-
-                  <div className="text-xs text-green-400 font-medium flex items-start gap-1.5">
-                    <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                    <span><strong className="text-green-300">Recommended Action:</strong> {alert.recommended_action}</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+      {/* Main Map Area */}
+      <div className="col-span-6 rounded-xl overflow-hidden border border-slate-800 bg-slate-900 relative h-full">
+        <LiveMap />
       </div>
 
       {/* Incident Details & Dispatch */}
@@ -378,13 +309,9 @@ export default function CommandCenter() {
 
             <div>
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Incident Details</label>
-              <div className="bg-slate-950 border border-blue-500/20 p-3 rounded-lg mt-1 relative overflow-hidden space-y-2">
+              <div className="bg-slate-950 border border-blue-500/20 p-3 rounded-lg mt-1 relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
                 <p className="text-sm text-blue-200">{selectedIncident.description}</p>
-                <div className="flex items-center gap-2 pt-2 border-t border-blue-500/10">
-                  <Users className="w-4 h-4 text-purple-400" />
-                  <span className="text-xs text-purple-300 font-semibold">{selectedIncident.reports_count} duplicate report(s) consolidated</span>
-                </div>
               </div>
             </div>
 

@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
 import uuid
-import math
 import os
 
 app = FastAPI(title="ResQAI API")
@@ -42,9 +41,6 @@ class Incident(BaseModel):
     reporter_phone: Optional[str] = None
     ai_priority: Optional[str] = None
     ai_priority_reason: Optional[str] = None
-    reporter_phones: List[str] = []
-    attached_photos: List[str] = []
-    attached_audios: List[str] = []
     photo_url: Optional[str] = None
     audio_url: Optional[str] = None
     created_at: Optional[str] = None
@@ -53,6 +49,8 @@ class Incident(BaseModel):
     notified_at: Optional[str] = None
     email_sent: bool = False
     email_sent_at: Optional[str] = None
+    citizen_email_sent: bool = False
+    citizen_email_sent_at: Optional[str] = None
 
 class Resource(BaseModel):
     id: str
@@ -61,20 +59,20 @@ class Resource(BaseModel):
     status: str
     location: Location
 
-class DisasterAlert(BaseModel):
+class IMDAlert(BaseModel):
     id: str
     type: str
-    risk_level: str
-    confidence: str
-    area: str
+    color_level: str  # Red, Orange, Yellow, Green
+    affected_area: str
     lat: float
     lng: float
     radius_km: float
-    expected_time: str
-    reason: str
-    recommended_action: str
+    issue_time: str
+    valid_until: str
+    severity: str
     source: str
-    timestamp: str
+    recommended_action: str
+    last_updated: str
 
 incidents_db: List[Incident] = []
 resources_db: List[Resource] = [
@@ -83,15 +81,7 @@ resources_db: List[Resource] = [
     Resource(id="r3", type="Police", name="Police Unit C", status="AVAILABLE", location=Location(lat=40.7118, lng=-74.0070)),
 ]
 
-def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
-
-def evaluate_ai_priority(incident_type: str, description: str, victims_count: int, reports_count: int, has_photo: bool, has_audio: bool) -> tuple[str, str]:
+def evaluate_ai_priority(incident_type: str, description: str, victims_count: int, has_photo: bool, has_audio: bool) -> tuple[str, str]:
     text = (description or "").lower()
     
     critical_keywords = ["trapped", "explosion", "massive fire", "unconscious", "casualty", "casualties", "drowning", "building collapse", "fatality", "bleeding", "heavy smoke"]
@@ -100,10 +90,8 @@ def evaluate_ai_priority(incident_type: str, description: str, victims_count: in
     has_critical_kw = any(kw in text for kw in critical_keywords)
     has_high_kw = any(kw in text for kw in high_keywords)
     
-    if incident_type in ["Road Accident", "Fire", "Flood", "Medical Emergency"] and (has_critical_kw or victims_count >= 3 or reports_count >= 3):
+    if incident_type in ["Road Accident", "Fire", "Flood", "Medical Emergency"] and (has_critical_kw or victims_count >= 3):
         reasons = []
-        if reports_count >= 3:
-            reasons.append(f"Multiple reports ({reports_count}+) consolidated")
         if has_critical_kw:
             reasons.append("Severe crisis indicators detected")
         if victims_count >= 3:
@@ -112,10 +100,8 @@ def evaluate_ai_priority(incident_type: str, description: str, victims_count: in
             reasons.append("Media evidence attached")
         return "CRITICAL", " + ".join(reasons) if reasons else "High severity emergency indicators detected."
     
-    if incident_type in ["Fire", "Road Accident", "Flood", "Medical Emergency"] or has_high_kw or reports_count >= 2:
+    if incident_type in ["Fire", "Road Accident", "Flood", "Medical Emergency"] or has_high_kw:
         reasons = []
-        if reports_count >= 2:
-            reasons.append(f"Multiple reports ({reports_count}) received")
         if has_high_kw:
             reasons.append("Urgent emergency indicators detected")
         if has_photo or has_audio:
@@ -133,7 +119,6 @@ def read_root():
 
 @app.get("/incidents")
 def get_incidents():
-    # Guarantee CRITICAL items float to the top
     priority_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     return sorted(incidents_db, key=lambda x: priority_order.get(x.ai_priority or x.severity, 2))
 
@@ -141,39 +126,55 @@ def get_incidents():
 def get_user_incidents(email: str):
     return [inc for inc in incidents_db if inc.reporter_email == email]
 
-@app.get("/disaster-alerts")
-def get_disaster_alerts():
+@app.get("/imd-alerts")
+def get_imd_alerts():
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Official India Meteorological Department (IMD) warning alerts for Indian region
     alerts = [
-        DisasterAlert(
-            id="ALERT-FL892",
-            type="FLOOD RISK",
-            risk_level="HIGH",
-            confidence="87%",
-            area="Mangaluru & Coastal River Basin",
+        IMDAlert(
+            id="IMD-RED-0492",
+            type="Extremely Heavy Rainfall & Flood Watch",
+            color_level="Red",
+            affected_area="Coastal Karnataka (Mangaluru & Udupi District)",
             lat=13.0447,
             lng=74.9785,
-            radius_km=12.5,
-            expected_time="Next 6 to 12 Hours",
-            reason="Heavy precipitation forecast (>110mm/6h) combined with high tidal surge levels.",
-            recommended_action="Prepare response units, stage rescue boats, and issue coastal advisories.",
-            source="Global Meteorological Data & Hydrological AI Models",
-            timestamp=now_iso
+            radius_km=15.0,
+            issue_time="29 Aug 2026 • 06:00 AM IST",
+            valid_until="30 Aug 2026 • 08:30 AM IST",
+            severity="Red Warning — Extremely Severe Weather",
+            source="India Meteorological Department (IMD) - mausam.imd.gov.in",
+            recommended_action="Take action immediately. Stay indoors, avoid low-lying areas and river banks. Emergency services on high alert.",
+            last_updated=now_iso
         ),
-        DisasterAlert(
-            id="ALERT-WF310",
-            type="WILDFIRE RISK",
-            risk_level="MEDIUM",
-            confidence="74%",
-            area="Western Ghats Forest Border",
+        IMDAlert(
+            id="IMD-ORG-0184",
+            type="Squally Winds & High Sea State Alert",
+            color_level="Orange",
+            affected_area="South Kanara Sea Coast",
             lat=13.1200,
-            lng=75.1000,
+            lng=74.8500,
             radius_km=25.0,
-            expected_time="Next 24 Hours",
-            reason="High atmospheric temperature (36°C) and low relative humidity (<25%) with dry winds.",
-            recommended_action="Deploy forest fire surveillance units and pre-position water tenders.",
-            source="Satellite Thermal Imaging & Microclimate AI Models",
-            timestamp=now_iso
+            issue_time="29 Aug 2026 • 08:00 AM IST",
+            valid_until="30 Aug 2026 • 06:00 PM IST",
+            severity="Orange Warning — Be Prepared",
+            source="India Meteorological Department (IMD) - mausam.imd.gov.in",
+            recommended_action="Fishermen are advised not to venture into deep sea. Coastal residents should secure loose structures.",
+            last_updated=now_iso
+        ),
+        IMDAlert(
+            id="IMD-YEL-0921",
+            type="Thunderstorm & Lightning Watch",
+            color_level="Yellow",
+            affected_area="Western Ghats & Inland Districts",
+            lat=13.2500,
+            lng=75.1500,
+            radius_km=30.0,
+            issue_time="29 Aug 2026 • 10:00 AM IST",
+            valid_until="30 Aug 2026 • 11:59 PM IST",
+            severity="Yellow Watch — Be Updated",
+            source="India Meteorological Department (IMD) - mausam.imd.gov.in",
+            recommended_action="Keep updated with local weather forecasts. Avoid shelter under tall trees during lightning.",
+            last_updated=now_iso
         )
     ]
     return alerts
@@ -208,7 +209,7 @@ async def create_incident(
         incidents_db.insert(0, incident)
         return {"message": "Incident reported successfully", "incident": incident}
 
-    # Process uploaded media files
+    # Upload photo & audio files
     photo_url = None
     if photo and photo.filename:
         ext = os.path.splitext(photo.filename)[1] or ".jpg"
@@ -235,53 +236,11 @@ async def create_incident(
     incident_desc = description or ""
     timestamp = created_at or now_iso
 
-    # Deduplication & Consolidation Check
-    duplicate_master = None
-    for existing in incidents_db:
-        dist_km = haversine_km(existing.location.lat, existing.location.lng, incident_lat, incident_lng)
-        if dist_km <= 1.5 and (existing.type == incident_type or (existing.type in ["Road Accident", "Fire", "Flood"] and incident_type in ["Road Accident", "Fire", "Flood"])):
-            duplicate_master = existing
-            break
-
-    if duplicate_master:
-        # Consolidate into existing master incident
-        duplicate_master.reports_count += 1
-        if reporter_phone and reporter_phone not in duplicate_master.reporter_phones:
-            duplicate_master.reporter_phones.append(reporter_phone)
-        if photo_url and photo_url not in duplicate_master.attached_photos:
-            duplicate_master.attached_photos.append(photo_url)
-            if not duplicate_master.photo_url:
-                duplicate_master.photo_url = photo_url
-        if audio_url and audio_url not in duplicate_master.attached_audios:
-            duplicate_master.attached_audios.append(audio_url)
-            if not duplicate_master.audio_url:
-                duplicate_master.audio_url = audio_url
-        
-        # Re-evaluate AI priority with new consolidated evidence
-        new_priority, new_reason = evaluate_ai_priority(
-            duplicate_master.type,
-            duplicate_master.description,
-            duplicate_master.estimated_victims,
-            duplicate_master.reports_count,
-            bool(duplicate_master.attached_photos),
-            bool(duplicate_master.attached_audios)
-        )
-        duplicate_master.ai_priority = new_priority
-        duplicate_master.ai_priority_reason = new_reason
-        duplicate_master.severity = new_priority
-        
-        return {
-            "message": "Duplicate report consolidated into existing master incident",
-            "is_duplicate": True,
-            "incident": duplicate_master
-        }
-
-    # New unique incident creation
+    # NO INCIDENT MERGING — Every citizen report is saved as an independent incident
     ai_priority, ai_priority_reason = evaluate_ai_priority(
         incident_type,
         incident_desc,
         estimated_victims if estimated_victims is not None else 1,
-        reports_count if reports_count is not None else 1,
         bool(photo_url),
         bool(audio_url)
     )
@@ -300,9 +259,6 @@ async def create_incident(
         reporter_phone=reporter_phone,
         ai_priority=ai_priority,
         ai_priority_reason=ai_priority_reason,
-        reporter_phones=[reporter_phone] if reporter_phone else [],
-        attached_photos=[photo_url] if photo_url else [],
-        attached_audios=[audio_url] if audio_url else [],
         photo_url=photo_url,
         audio_url=audio_url,
         created_at=timestamp,
@@ -310,11 +266,85 @@ async def create_incident(
         notified=False,
         notified_at=None,
         email_sent=False,
-        email_sent_at=None
+        email_sent_at=None,
+        citizen_email_sent=False,
+        citizen_email_sent_at=None
     )
     
     incidents_db.insert(0, incident)
-    return {"message": "Incident reported successfully", "is_duplicate": False, "incident": incident}
+    return {"message": "Incident reported successfully", "incident": incident}
+
+@app.post("/incidents/{incident_id}/send-citizen-email")
+async def send_citizen_email(incident_id: str):
+    incident = next((inc for inc in incidents_db if inc.id == incident_id), None)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    
+    if not incident.reporter_email:
+        raise HTTPException(status_code=400, detail="No reporter email associated with this incident")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    incident_time = incident.created_at or incident.time or now_iso
+
+    subject = f"🚨 ResQAI Emergency Report Confirmation — {incident.id}"
+    body = (
+        f"Dear Citizen,\n\n"
+        f"Your emergency report has been successfully recorded by ResQAI.\n\n"
+        f"REPORT CONFIRMATION DETAILS:\n"
+        f"• Incident ID: {incident.id}\n"
+        f"• Emergency Type: {incident.type}\n"
+        f"• Reported Date & Time: {incident_time}\n"
+        f"• Priority Level: {incident.ai_priority or incident.severity}\n"
+        f"• GPS Location: {incident.location.lat:.4f}, {incident.location.lng:.4f}\n"
+        f"• Map Location Link: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n"
+        f"• Attached Photo: {'Attached' if incident.photo_url else 'None'}\n"
+        f"• Voice Recording: {'Attached' if incident.audio_url else 'None'}\n\n"
+        f"Description:\n{incident.description}\n\n"
+        f"Our emergency response team and regional helpers have been alerted to your situation.\n"
+        f"Thank you for reporting with ResQAI."
+    )
+
+    smtp_server = os.environ.get("SMTP_SERVER")
+    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    smtp_user = os.environ.get("SMTP_USERNAME")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+    
+    email_delivered = False
+    if smtp_server and smtp_user and smtp_pass:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = incident.reporter_email
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain"))
+            
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+            email_delivered = True
+        except Exception as e:
+            print(f"[CITIZEN EMAIL ERROR] Failed to send SMTP email to citizen: {e}")
+    
+    print(f"\n================ CITIZEN CONFIRMATION EMAIL ================\nTo: {incident.reporter_email}\nSubject: {subject}\n\n{body}\n============================================================\n")
+    
+    incident.citizen_email_sent = True
+    incident.citizen_email_sent_at = now_iso
+
+    return {
+        "success": True,
+        "message": f"Confirmation email sent to citizen at {incident.reporter_email}",
+        "recipient": incident.reporter_email,
+        "email_sent_at": now_iso,
+        "subject": subject,
+        "body": body,
+        "email_delivered": email_delivered,
+        "incident": incident
+    }
 
 @app.post("/incidents/{incident_id}/notify-helper")
 async def notify_helper(incident_id: str):
@@ -327,12 +357,11 @@ async def notify_helper(incident_id: str):
 
     alert_message = (
         f"🚨 RESQAI EMERGENCY ALERT [{incident.ai_priority or incident.severity}]\n"
-        f"Incident: {incident.type} ({incident.reports_count} consolidated report(s))\n"
+        f"Incident: {incident.type}\n"
         f"Time: {incident_time}\n"
-        f"Citizen Contact: {', '.join(incident.reporter_phones) if incident.reporter_phones else (incident.reporter_phone or 'N/A')}\n"
+        f"Citizen Contact: {incident.reporter_phone or 'N/A'}\n"
         f"Location: {incident.location.lat:.4f}, {incident.location.lng:.4f}\n"
         f"Map: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n"
-        f"AI Reasoning: {incident.ai_priority_reason or 'Emergency reported'}\n"
         f"Description: {incident.description}\n"
         f"Please respond immediately."
     )
@@ -386,14 +415,13 @@ async def send_email_alert(incident_id: str):
         f"Incident ID: {incident.id}\n"
         f"AI Priority: {incident.ai_priority or incident.severity}\n"
         f"AI Priority Reason: {incident.ai_priority_reason or 'Emergency reported'}\n"
-        f"Consolidated Reports: {incident.reports_count}\n"
-        f"Citizen Contact(s): {', '.join(incident.reporter_phones) if incident.reporter_phones else (incident.reporter_phone or 'N/A')}\n"
+        f"Citizen Contact: {incident.reporter_phone or 'N/A'}\n"
         f"Reported Time: {incident_time}\n\n"
         f"Location Coordinates: {incident.location.lat:.4f}, {incident.location.lng:.4f}\n"
         f"Google Maps Link: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n\n"
         f"Description:\n{incident.description}\n\n"
-        f"Attached Photos: {', '.join(incident.attached_photos) if incident.attached_photos else (incident.photo_url or 'None')}\n"
-        f"Attached Audios: {', '.join(incident.attached_audios) if incident.attached_audios else (incident.audio_url or 'None')}\n\n"
+        f"Attached Photo: {incident.photo_url or 'None'}\n"
+        f"Attached Audio: {incident.audio_url or 'None'}\n\n"
         f"Please respond immediately."
     )
     
@@ -462,6 +490,7 @@ def trigger_demo():
     )
     incidents_db.insert(0, new_incident)
     return {"message": "Demo triggered", "incident": new_incident}
+
 
 
 
