@@ -6,6 +6,13 @@ from typing import List, Optional
 from datetime import datetime, timezone
 import uuid
 import os
+import requests
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 app = FastAPI(title="ResQAI API")
 
@@ -318,10 +325,81 @@ def dispatch_command_center_email(incident: Incident, force_retry: bool = False)
     smtp_user = os.environ.get("SMTP_USERNAME")
     smtp_pass = os.environ.get("SMTP_PASSWORD")
     
-    email_delivered = False
-    error_detail = None
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
+    webhook_url = os.environ.get("EMAIL_WEBHOOK_URL")
 
-    if smtp_server and smtp_user and smtp_pass:
+    email_delivered = False
+    error_details = []
+
+    # Provider 1: Resend HTTP API
+    if resend_api_key:
+        try:
+            res = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "from": "ResQAI Emergency <alerts@resqai.org>",
+                    "to": [recipient],
+                    "subject": subject,
+                    "text": body
+                },
+                timeout=10
+            )
+            if res.status_code in [200, 201, 202]:
+                email_delivered = True
+                print(f"[COMMAND CENTRE EMAIL SUCCESS] Delivered via Resend API to {recipient}")
+            else:
+                error_details.append(f"Resend API error ({res.status_code}): {res.text}")
+        except Exception as e:
+            error_details.append(f"Resend HTTP request failed: {e}")
+
+    # Provider 2: SendGrid HTTP API
+    if not email_delivered and sendgrid_api_key:
+        try:
+            res = requests.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={
+                    "Authorization": f"Bearer {sendgrid_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "personalizations": [{"to": [{"email": recipient}]}],
+                    "from": {"email": "alerts@resqai.org", "name": "ResQAI Emergency"},
+                    "subject": subject,
+                    "content": [{"type": "text/plain", "value": body}]
+                },
+                timeout=10
+            )
+            if res.status_code in [200, 202]:
+                email_delivered = True
+                print(f"[COMMAND CENTRE EMAIL SUCCESS] Delivered via SendGrid API to {recipient}")
+            else:
+                error_details.append(f"SendGrid API error ({res.status_code}): {res.text}")
+        except Exception as e:
+            error_details.append(f"SendGrid HTTP request failed: {e}")
+
+    # Provider 3: Custom Webhook API
+    if not email_delivered and webhook_url:
+        try:
+            res = requests.post(
+                webhook_url,
+                json={"to": recipient, "subject": subject, "body": body, "incident_id": incident.id},
+                timeout=10
+            )
+            if res.status_code in [200, 201, 202]:
+                email_delivered = True
+                print(f"[COMMAND CENTRE EMAIL SUCCESS] Delivered via Webhook to {recipient}")
+            else:
+                error_details.append(f"Webhook error ({res.status_code}): {res.text}")
+        except Exception as e:
+            error_details.append(f"Webhook request failed: {e}")
+
+    # Provider 4: Standard SMTP (Gmail, Outlook, custom mail server)
+    if not email_delivered and smtp_server and smtp_user and smtp_pass:
         try:
             import smtplib
             from email.mime.text import MIMEText
@@ -340,11 +418,12 @@ def dispatch_command_center_email(incident: Incident, force_retry: bool = False)
             email_delivered = True
             print(f"[COMMAND CENTRE EMAIL SUCCESS] Email delivered via SMTP to {recipient}")
         except Exception as e:
-            error_detail = f"SMTP error: {e}"
+            error_details.append(f"SMTP error ({smtp_server}): {e}")
             print(f"[COMMAND CENTRE EMAIL ERROR] Failed to send SMTP email to {recipient}: {e}")
-    else:
-        error_detail = "SMTP environment credentials not configured (Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD)"
-        print(f"[COMMAND CENTRE EMAIL LOG] Recipient: {recipient}\nSubject: {subject}\n{body}")
+
+    if not email_delivered and not (smtp_server and smtp_user and smtp_pass) and not resend_api_key and not sendgrid_api_key and not webhook_url:
+        error_details.append("No backend email credentials configured. Please copy backend/.env.example to backend/.env and set your SMTP_SERVER or RESEND_API_KEY.")
+        print(f"\n[COMMAND CENTRE EMAIL ACTION REQUIRED]\nTarget: {recipient}\nSubject: {subject}\n{body}\n=======================================================")
 
     if email_delivered:
         incident.email_sent = True
@@ -360,13 +439,14 @@ def dispatch_command_center_email(incident: Incident, force_retry: bool = False)
         }
     else:
         incident.email_sent = False
+        err_msg = " | ".join(error_details) if error_details else "Email provider not configured or delivery failed"
         return {
             "success": False,
             "recipient": recipient,
             "email_delivered": False,
             "already_sent": False,
-            "error": error_detail,
-            "message": f"Email delivery pending/failed: {error_detail}"
+            "error": err_msg,
+            "message": f"Email delivery failed: {err_msg}"
         }
 
 @app.post("/incidents")
