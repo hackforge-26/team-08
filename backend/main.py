@@ -21,6 +21,7 @@ os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 HELPER_PHONE_NUMBER = os.environ.get("HELPER_PHONE_NUMBER", "9035351841")
+ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "helper@resqai.org")
 
 class Location(BaseModel):
     lat: float
@@ -37,10 +38,13 @@ class Incident(BaseModel):
     description: str
     reporter_email: Optional[str] = None
     photo_url: Optional[str] = None
+    audio_url: Optional[str] = None
     created_at: Optional[str] = None
     time: Optional[str] = None
     notified: bool = False
     notified_at: Optional[str] = None
+    email_sent: bool = False
+    email_sent_at: Optional[str] = None
 
 class Resource(BaseModel):
     id: str
@@ -72,6 +76,7 @@ def get_user_incidents(email: str):
 async def create_incident(
     request: Request,
     photo: Optional[UploadFile] = File(None),
+    audio: Optional[UploadFile] = File(None),
     type: Optional[str] = Form(None),
     severity: Optional[str] = Form(None),
     status: Optional[str] = Form(None),
@@ -97,13 +102,27 @@ async def create_incident(
         photo_url = None
         if photo and photo.filename:
             ext = os.path.splitext(photo.filename)[1]
-            unique_filename = f"{uuid.uuid4().hex}{ext}"
+            if not ext:
+                ext = ".jpg"
+            unique_filename = f"photo_{uuid.uuid4().hex}{ext}"
             file_path = os.path.join("uploads", unique_filename)
             with open(file_path, "wb") as f:
                 content = await photo.read()
                 f.write(content)
             photo_url = f"http://localhost:8000/uploads/{unique_filename}"
         
+        audio_url = None
+        if audio and audio.filename:
+            ext = os.path.splitext(audio.filename)[1]
+            if not ext:
+                ext = ".webm"
+            unique_filename = f"audio_{uuid.uuid4().hex}{ext}"
+            file_path = os.path.join("uploads", unique_filename)
+            with open(file_path, "wb") as f:
+                content = await audio.read()
+                f.write(content)
+            audio_url = f"http://localhost:8000/uploads/{unique_filename}"
+
         incident_id = f"INC-{uuid.uuid4().hex[:6].upper()}"
         timestamp = created_at or now_iso
         incident = Incident(
@@ -117,10 +136,13 @@ async def create_incident(
             description=description or "",
             reporter_email=reporter_email,
             photo_url=photo_url,
+            audio_url=audio_url,
             created_at=timestamp,
             time=timestamp,
             notified=False,
-            notified_at=None
+            notified_at=None,
+            email_sent=False,
+            email_sent_at=None
         )
         
     incidents_db.insert(0, incident) # Add to top
@@ -143,6 +165,7 @@ async def notify_helper(incident_id: str):
         f"Map: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n"
         f"Description: {incident.description}\n"
         f"Photo: {incident.photo_url or 'None'}\n"
+        f"Audio: {incident.audio_url or 'None'}\n"
         f"Please respond immediately."
     )
     
@@ -179,6 +202,73 @@ async def notify_helper(incident_id: str):
         "incident": incident
     }
 
+@app.post("/incidents/{incident_id}/send-email")
+async def send_email_alert(incident_id: str):
+    incident = next((inc for inc in incidents_db if inc.id == incident_id), None)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    
+    now_iso = datetime.now(timezone.utc).isoformat()
+    incident_time = incident.created_at or incident.time or now_iso
+    
+    subject = f"🚨 ResQAI Emergency Alert — {incident.type}"
+    body = (
+        f"🚨 RESQAI EMERGENCY ALERT\n\n"
+        f"Incident Type: {incident.type}\n"
+        f"Incident ID: {incident.id}\n"
+        f"Reported Time: {incident_time}\n"
+        f"Severity: {incident.severity}\n"
+        f"Status: {incident.status}\n\n"
+        f"Location Coordinates: {incident.location.lat:.4f}, {incident.location.lng:.4f}\n"
+        f"Google Maps Link: https://www.google.com/maps?q={incident.location.lat},{incident.location.lng}\n\n"
+        f"Description:\n{incident.description}\n\n"
+        f"Attached Photo: {incident.photo_url or 'None'}\n"
+        f"Attached Audio: {incident.audio_url or 'None'}\n\n"
+        f"Please respond immediately."
+    )
+    
+    smtp_server = os.environ.get("SMTP_SERVER")
+    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    smtp_user = os.environ.get("SMTP_USERNAME")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+    
+    email_delivered = False
+    if smtp_server and smtp_user and smtp_pass:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = ALERT_EMAIL_TO
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain"))
+            
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+            email_delivered = True
+        except Exception as e:
+            print(f"[EMAIL ERROR] Failed to send SMTP email: {e}")
+    
+    print(f"\n================ EMAIL ALERT NOTIFICATION ================\nTo: {ALERT_EMAIL_TO}\nSubject: {subject}\n\n{body}\n=========================================================\n")
+    
+    incident.email_sent = True
+    incident.email_sent_at = now_iso
+    
+    return {
+        "success": True,
+        "message": f"Email alert sent to {ALERT_EMAIL_TO}",
+        "recipient": ALERT_EMAIL_TO,
+        "email_sent_at": now_iso,
+        "subject": subject,
+        "body": body,
+        "email_delivered": email_delivered,
+        "incident": incident
+    }
+
 @app.get("/resources")
 def get_resources():
     return resources_db
@@ -200,5 +290,6 @@ def trigger_demo():
     )
     incidents_db.insert(0, new_incident)
     return {"message": "Demo triggered", "incident": new_incident}
+
 
 

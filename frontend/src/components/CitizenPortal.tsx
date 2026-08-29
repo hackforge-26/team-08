@@ -6,9 +6,15 @@ export default function CitizenPortal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   
-  // Interactive states
+  // Audio recording states
   const [isRecording, setIsRecording] = useState(false);
-  const [hasAudio, setHasAudio] = useState(false);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerIntervalRef = useRef<any>(null);
 
   // Photo states
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -25,6 +31,93 @@ export default function CitizenPortal() {
   const [reportType, setReportType] = useState('Road Accident');
   const [description, setDescription] = useState('');
 
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const secs = (seconds % 60).toString().padStart(2, '0');
+    return `${mins}:${secs}`;
+  };
+
+  // Start real microphone voice recording
+  const startRecording = async () => {
+    setAudioError(null);
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setAudioError("Voice recording is not supported in your browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        setAudioUrl(URL.createObjectURL(blob));
+        // Stop microphone stream tracks
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start(100);
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingDuration((prev) => {
+          if (prev >= 60) {
+            // Auto stop after 60 seconds max
+            stopRecording();
+            return 60;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err: any) {
+      console.error("Microphone access error:", err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setAudioError("Microphone permission denied by user.");
+      } else {
+        setAudioError("Failed to access microphone.");
+      }
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  };
+
+  const handleToggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  const handleDeleteAudio = () => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+    setAudioBlob(null);
+    setAudioUrl(null);
+    setAudioError(null);
+    setRecordingDuration(0);
+  };
+
   // Handle Photo selection & validation
   const handlePhotoClick = () => {
     fileInputRef.current?.click();
@@ -40,7 +133,7 @@ export default function CitizenPortal() {
       return;
     }
 
-    // Validate 10 MB size limit (10 * 1024 * 1024 bytes)
+    // Validate 10 MB size limit
     if (file.size > 10 * 1024 * 1024) {
       setPhotoError('File size exceeds the 10 MB limit.');
       return;
@@ -100,18 +193,6 @@ export default function CitizenPortal() {
     );
   };
 
-  const handleRecordAudio = () => {
-    if (hasAudio) {
-      setHasAudio(false);
-      return;
-    }
-    setIsRecording(true);
-    setTimeout(() => {
-      setIsRecording(false);
-      setHasAudio(true);
-    }, 2000);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -142,6 +223,10 @@ export default function CitizenPortal() {
       formData.append('photo', photoFile);
     }
 
+    if (audioBlob) {
+      formData.append('audio', audioBlob, 'voice-recording.webm');
+    }
+
     try {
       await fetch('http://localhost:8000/incidents', {
         method: 'POST',
@@ -159,9 +244,9 @@ export default function CitizenPortal() {
     setSubmitted(false);
     setDescription('');
     handleRemovePhoto();
+    handleDeleteAudio();
     setCoords(null);
     setLocationError(null);
-    setHasAudio(false);
   };
 
   if (submitted) {
@@ -259,11 +344,19 @@ export default function CitizenPortal() {
                 
                 <button 
                   type="button" 
-                  onClick={handleRecordAudio}
-                  className={`flex flex-col items-center justify-center gap-2 py-4 border rounded-lg transition-all ${isRecording ? 'bg-red-500/20 border-red-500 animate-pulse text-red-500' : hasAudio ? 'bg-green-500/10 border-green-500/50 text-green-400' : 'bg-slate-950 border-slate-800 hover:border-blue-500/50 hover:bg-blue-500/5 text-slate-400 hover:text-blue-400'}`}
+                  onClick={handleToggleRecording}
+                  className={`flex flex-col items-center justify-center gap-2 py-4 border rounded-lg transition-all ${isRecording ? 'bg-red-500/20 border-red-500 animate-pulse text-red-500' : audioBlob ? 'bg-green-500/10 border-green-500/50 text-green-400' : audioError ? 'bg-red-500/10 border-red-500/50 text-red-400' : 'bg-slate-950 border-slate-800 hover:border-blue-500/50 hover:bg-blue-500/5 text-slate-400 hover:text-blue-400'}`}
                 >
-                  <Mic className="w-6 h-6" />
-                  <span className="text-xs font-medium">{isRecording ? 'Recording...' : hasAudio ? 'Audio Saved' : 'Record Audio'}</span>
+                  {isRecording ? (
+                    <Mic className="w-6 h-6 animate-ping text-red-500" />
+                  ) : audioBlob ? (
+                    <Check className="w-6 h-6 text-green-400" />
+                  ) : (
+                    <Mic className="w-6 h-6" />
+                  )}
+                  <span className="text-xs font-medium">
+                    {isRecording ? `🔴 Recording... (${formatDuration(recordingDuration)})` : audioBlob ? 'Audio Recorded' : 'Record Audio'}
+                  </span>
                 </button>
                 
                 <button 
@@ -331,6 +424,37 @@ export default function CitizenPortal() {
                       Remove
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Audio Error Banner */}
+              {audioError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400 flex items-center justify-between">
+                  <span>{audioError}</span>
+                  <button type="button" onClick={() => setAudioError(null)} className="text-red-400 hover:text-red-300">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Audio Preview Panel */}
+              {audioUrl && (
+                <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-green-400">
+                      <Mic className="w-4 h-4 text-green-400" />
+                      <span>🎙 Audio Recorded ({formatDuration(recordingDuration)})</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDeleteAudio}
+                      className="text-xs px-2.5 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded font-medium transition-colors flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      Delete / Re-record
+                    </button>
+                  </div>
+                  <audio controls src={audioUrl} className="w-full h-9 rounded" />
                 </div>
               )}
 

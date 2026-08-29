@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, ShieldAlert, Clock, Users, MapPin, CheckCircle, Phone, ExternalLink, AlertCircle, Check, Loader2, Megaphone } from 'lucide-react';
+import { Activity, ShieldAlert, Clock, Users, MapPin, CheckCircle, Phone, ExternalLink, AlertCircle, Check, Loader2, Megaphone, Mail, Mic } from 'lucide-react';
 import LiveMap from './LiveMap';
 import { HELPER_CONTACT_NAME, HELPER_PHONE_NUMBER } from '../config';
 import { formatIncidentTime } from '../utils/dateFormatter';
@@ -9,6 +9,9 @@ export default function CommandCenter() {
   const [incidents, setIncidents] = useState<any[]>([]);
   const [isNotifying, setIsNotifying] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
+
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
   React.useEffect(() => {
     const fetchIncidents = async () => {
@@ -50,6 +53,26 @@ export default function CommandCenter() {
     }
   };
 
+  const handleSendEmailAlert = async (incidentId: string) => {
+    setIsSendingEmail(true);
+    setEmailError(null);
+    try {
+      const res = await fetch(`http://localhost:8000/incidents/${incidentId}/send-email`, {
+        method: 'POST'
+      });
+      if (!res.ok) throw new Error('Email alert failed');
+      const data = await res.json();
+      
+      setSelectedIncident((prev: any) => prev ? { ...prev, email_sent: true, email_sent_at: data.email_sent_at } : null);
+      setIncidents((prev: any[]) => prev.map((inc) => inc.id === incidentId ? { ...inc, email_sent: true, email_sent_at: data.email_sent_at } : inc));
+    } catch (err) {
+      console.error("Failed to send email alert", err);
+      setEmailError("Failed to send email");
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
   const criticalCount = incidents.filter(i => i.severity === 'CRITICAL' || i.severity === 'HIGH').length;
 
   return (
@@ -69,7 +92,7 @@ export default function CommandCenter() {
             incidents.map((incident) => (
               <div 
                 key={incident.id}
-                onClick={() => { setSelectedIncident(incident); setNotificationError(null); }}
+                onClick={() => { setSelectedIncident(incident); setNotificationError(null); setEmailError(null); }}
                 className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedIncident?.id === incident.id ? 'bg-slate-800 border-blue-500' : 'bg-slate-950 border-slate-800 hover:border-slate-700'}`}
               >
                 <div className="flex justify-between items-start mb-2">
@@ -83,11 +106,18 @@ export default function CommandCenter() {
                   <Clock className="w-3 h-3 text-slate-500 flex-shrink-0" />
                   <span className="truncate">{formatIncidentTime(incident.created_at || incident.time)}</span>
                 </div>
-                {incident.notified && (
-                  <div className="mt-2 text-[10px] font-semibold text-green-400 flex items-center gap-1">
-                    <Check className="w-3 h-3" /> Helper Notified
-                  </div>
-                )}
+                <div className="flex items-center gap-2 mt-2">
+                  {incident.notified && (
+                    <div className="text-[10px] font-semibold text-green-400 flex items-center gap-0.5">
+                      <Check className="w-3 h-3" /> Helper Notified
+                    </div>
+                  )}
+                  {incident.email_sent && (
+                    <div className="text-[10px] font-semibold text-blue-400 flex items-center gap-0.5">
+                      <Mail className="w-3 h-3" /> Email Sent
+                    </div>
+                  )}
+                </div>
               </div>
             ))
           )}
@@ -133,13 +163,25 @@ export default function CommandCenter() {
 
             {selectedIncident.photo_url && (
               <div>
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Attached Media</label>
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Attached Photo</label>
                 <div className="mt-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
                   <img 
                     src={selectedIncident.photo_url} 
                     alt="Incident photo" 
                     className="w-full h-36 object-cover hover:scale-105 transition-transform duration-200"
                   />
+                </div>
+              </div>
+            )}
+
+            {selectedIncident.audio_url && (
+              <div>
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                  <Mic className="w-3.5 h-3.5 text-blue-400" />
+                  <span>🎙 Voice Recording</span>
+                </label>
+                <div className="mt-1 p-2 bg-slate-950 border border-slate-800 rounded-lg">
+                  <audio controls src={selectedIncident.audio_url} className="w-full h-8" />
                 </div>
               </div>
             )}
@@ -166,14 +208,70 @@ export default function CommandCenter() {
               </div>
             </div>
 
-            {/* Helper Contact Card */}
+            {/* Helper Contact Card & Email Alert */}
             <div>
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Emergency Helper Contact</label>
-              <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg mt-1">
-                <div className="text-sm font-semibold text-slate-200">{HELPER_CONTACT_NAME}</div>
-                <div className="text-xs text-blue-400 font-mono mt-1 flex items-center gap-1.5 font-bold">
-                  <Phone className="w-3.5 h-3.5" />
-                  <span>📞 {HELPER_PHONE_NUMBER}</span>
+              <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg mt-1 space-y-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-200">{HELPER_CONTACT_NAME}</div>
+                  <div className="text-xs text-blue-400 font-mono mt-1 flex items-center gap-1.5 font-bold">
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>📞 {HELPER_PHONE_NUMBER}</span>
+                  </div>
+                </div>
+
+                {/* Email Notification Option */}
+                <div className="pt-2 border-t border-slate-800/80">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                    <Mail className="w-3.5 h-3.5 text-blue-400" />
+                    <span>📧 Email Notification</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Send emergency details via email</p>
+                  
+                  {selectedIncident.email_sent ? (
+                    <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded-lg text-center">
+                      <div className="flex items-center justify-center gap-1.5 text-green-400 font-bold text-xs">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>✓ Email Alert Sent</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Sent: {formatIncidentTime(selectedIncident.email_sent_at)}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <button 
+                        onClick={() => handleSendEmailAlert(selectedIncident.id)}
+                        disabled={isSendingEmail}
+                        className={`w-full py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all
+                          ${isSendingEmail ? 'bg-slate-800/50 text-slate-400 cursor-wait' : 'bg-slate-800 hover:bg-slate-700 text-blue-400 border border-blue-500/30 font-semibold'}`}
+                      >
+                        {isSendingEmail ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                            <span>Sending Email...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Mail className="w-3.5 h-3.5" />
+                            <span>Send Email Alert</span>
+                          </>
+                        )}
+                      </button>
+
+                      {emailError && (
+                        <div className="mt-1.5 p-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between text-[11px] text-red-400">
+                          <span>⚠ {emailError}</span>
+                          <button 
+                            onClick={() => handleSendEmailAlert(selectedIncident.id)} 
+                            className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded font-semibold transition-colors flex-shrink-0"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -239,4 +337,5 @@ export default function CommandCenter() {
     </div>
   );
 }
+
 
