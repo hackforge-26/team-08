@@ -9,6 +9,7 @@ export interface OfflineIncident {
   lat: number;
   lng: number;
   reporter_email?: string;
+  reporter_phone?: string;
   photo_blob?: Blob | null;
   photo_name?: string;
   photo_url?: string;

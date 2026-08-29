@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, ShieldAlert, Clock, Users, MapPin, CheckCircle, Phone, ExternalLink, AlertCircle, Check, Loader2, Megaphone, Mail, Mic } from 'lucide-react';
+import { Activity, ShieldAlert, Clock, Users, MapPin, CheckCircle, Phone, ExternalLink, AlertCircle, Check, Loader2, Megaphone, Mail, Mic, CloudLightning, AlertTriangle, ShieldCheck } from 'lucide-react';
 import LiveMap from './LiveMap';
 import { HELPER_CONTACT_NAME, HELPER_PHONE_NUMBER } from '../config';
 import { formatIncidentTime } from '../utils/dateFormatter';
@@ -8,6 +8,7 @@ import { getAllOfflineIncidents, cacheOnlineIncidents, type OfflineIncident } fr
 export default function CommandCenter() {
   const [selectedIncident, setSelectedIncident] = useState<any>(null);
   const [incidents, setIncidents] = useState<any[]>([]);
+  const [disasterAlerts, setDisasterAlerts] = useState<any[]>([]);
   const [isNotifying, setIsNotifying] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
 
@@ -28,6 +29,16 @@ export default function CommandCenter() {
           }
         } catch (e) {
           isOnline = false;
+        }
+
+        try {
+          const alertRes = await fetch('http://localhost:8000/disaster-alerts');
+          if (alertRes.ok) {
+            const alertData = await alertRes.json();
+            setDisasterAlerts(alertData);
+          }
+        } catch (e) {
+          console.warn("Could not fetch disaster alerts", e);
         }
       }
 
@@ -52,6 +63,8 @@ export default function CommandCenter() {
           location: { lat: item.lat, lng: item.lng },
           description: item.description,
           reports_count: 1,
+          reporter_phone: item.reporter_phone,
+          reporter_phones: item.reporter_phone ? [item.reporter_phone] : [],
           created_at: item.created_at || item.time,
           time: item.created_at || item.time,
           photo_url,
@@ -69,6 +82,15 @@ export default function CommandCenter() {
       const pendingOnly = formattedOffline.filter(i => i.sync_status === 'pending' && !serverIds.has(i.id));
 
       const combined = [...pendingOnly, ...serverIncidents];
+
+      // Sort by AI Priority: CRITICAL -> HIGH -> MEDIUM -> LOW
+      const priorityRank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+      combined.sort((a, b) => {
+        const rankA = priorityRank[a.ai_priority || a.severity] ?? 2;
+        const rankB = priorityRank[b.ai_priority || b.severity] ?? 2;
+        return rankA - rankB;
+      });
+
       setIncidents(combined);
 
       if (selectedIncident) {
@@ -150,7 +172,7 @@ export default function CommandCenter() {
     }
   };
 
-  const criticalCount = incidents.filter(i => i.severity === 'CRITICAL' || i.severity === 'HIGH').length;
+  const criticalCount = incidents.filter(i => (i.ai_priority || i.severity) === 'CRITICAL' || (i.ai_priority || i.severity) === 'HIGH').length;
 
   return (
     <div className="h-full grid grid-cols-12 gap-6">
@@ -166,51 +188,111 @@ export default function CommandCenter() {
           {incidents.length === 0 ? (
             <div className="p-4 text-center text-slate-500 text-sm">No active incidents reported.</div>
           ) : (
-            incidents.map((incident) => (
-              <div 
-                key={incident.id}
-                onClick={() => { setSelectedIncident(incident); setNotificationError(null); setEmailError(null); }}
-                className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedIncident?.id === incident.id ? 'bg-slate-800 border-blue-500' : 'bg-slate-950 border-slate-800 hover:border-slate-700'}`}
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-mono text-slate-400">{incident.id}</span>
-                  <div className="flex items-center gap-1">
-                    {incident.sync_status === 'pending' && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                        🟠 Pending Sync
+            incidents.map((incident) => {
+              const priority = incident.ai_priority || incident.severity;
+              return (
+                <div 
+                  key={incident.id}
+                  onClick={() => { setSelectedIncident(incident); setNotificationError(null); setEmailError(null); }}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedIncident?.id === incident.id ? 'bg-slate-800 border-blue-500' : 'bg-slate-950 border-slate-800 hover:border-slate-700'}`}
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-xs font-mono text-slate-400">{incident.id}</span>
+                    <div className="flex items-center gap-1">
+                      {incident.sync_status === 'pending' && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                          🟠 Pending Sync
+                        </span>
+                      )}
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${priority === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/40 animate-pulse' : priority === 'HIGH' ? 'bg-orange-500/20 text-orange-400' : priority === 'LOW' ? 'bg-purple-500/20 text-purple-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                        {priority}
                       </span>
+                    </div>
+                  </div>
+                  <h4 className="font-medium text-slate-200 text-sm mb-1">{incident.type}</h4>
+                  <div className="flex items-center text-xs text-slate-400 gap-1.5">
+                    <Clock className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                    <span className="truncate">{formatIncidentTime(incident.created_at || incident.time)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    {incident.notified && (
+                      <div className="text-[10px] font-semibold text-green-400 flex items-center gap-0.5">
+                        <Check className="w-3 h-3" /> Helper Notified
+                      </div>
                     )}
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${incident.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : incident.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400' : incident.severity === 'LOW' ? 'bg-purple-500/20 text-purple-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                      {incident.severity}
-                    </span>
+                    {incident.email_sent && (
+                      <div className="text-[10px] font-semibold text-blue-400 flex items-center gap-0.5">
+                        <Mail className="w-3 h-3" /> Email Sent
+                      </div>
+                    )}
+                    {incident.reports_count > 1 && (
+                      <div className="text-[10px] font-semibold text-purple-400 flex items-center gap-0.5 ml-auto">
+                        <Users className="w-3 h-3" /> {incident.reports_count} Merged
+                      </div>
+                    )}
                   </div>
                 </div>
-                <h4 className="font-medium text-slate-200 text-sm mb-1">{incident.type}</h4>
-                <div className="flex items-center text-xs text-slate-400 gap-1.5">
-                  <Clock className="w-3 h-3 text-slate-500 flex-shrink-0" />
-                  <span className="truncate">{formatIncidentTime(incident.created_at || incident.time)}</span>
-                </div>
-                <div className="flex items-center gap-2 mt-2">
-                  {incident.notified && (
-                    <div className="text-[10px] font-semibold text-green-400 flex items-center gap-0.5">
-                      <Check className="w-3 h-3" /> Helper Notified
-                    </div>
-                  )}
-                  {incident.email_sent && (
-                    <div className="text-[10px] font-semibold text-blue-400 flex items-center gap-0.5">
-                      <Mail className="w-3 h-3" /> Email Sent
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
 
-      {/* Main Map Area */}
-      <div className="col-span-6 rounded-xl overflow-hidden border border-slate-800 bg-slate-900 relative">
-        <LiveMap />
+      {/* Main Map & AI Disaster Alerts */}
+      <div className="col-span-6 flex flex-col gap-4 overflow-y-auto">
+        <div className="h-96 rounded-xl overflow-hidden border border-slate-800 bg-slate-900 relative">
+          <LiveMap />
+        </div>
+
+        {/* AI Disaster Alerts Panel */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+            <div className="flex items-center gap-2">
+              <CloudLightning className="w-5 h-5 text-amber-400 animate-pulse" />
+              <h3 className="font-bold text-slate-100 text-sm uppercase tracking-wider">🌪️ AI DISASTER ALERTS</h3>
+            </div>
+            <span className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold px-2 py-0.5 rounded">
+              EARLY WARNING SYSTEM
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {disasterAlerts.length === 0 ? (
+              <div className="text-xs text-slate-500 text-center py-2">No elevated disaster risks currently detected.</div>
+            ) : (
+              disasterAlerts.map((alert) => (
+                <div key={alert.id} className="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className={`w-4 h-4 ${alert.risk_level === 'CRITICAL' ? 'text-red-500' : 'text-amber-400'}`} />
+                      <span className="text-sm font-bold text-slate-100">{alert.type}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${alert.risk_level === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                        {alert.risk_level} RISK
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
+                      Confidence: {alert.confidence}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-400">
+                    <div><strong className="text-slate-300">Area:</strong> {alert.area}</div>
+                    <div><strong className="text-slate-300">Expected:</strong> {alert.expected_time}</div>
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed bg-slate-900/60 p-2 rounded border border-slate-800">
+                    <strong className="text-amber-300">AI Reason:</strong> {alert.reason}
+                  </p>
+
+                  <div className="text-xs text-green-400 font-medium flex items-start gap-1.5">
+                    <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span><strong className="text-green-300">Recommended Action:</strong> {alert.recommended_action}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Incident Details & Dispatch */}
@@ -218,7 +300,7 @@ export default function CommandCenter() {
         {selectedIncident ? (
           <div className="p-5 space-y-4">
             <div className="flex items-center gap-2 mb-2">
-              <ShieldAlert className={`w-6 h-6 ${selectedIncident.severity === 'CRITICAL' ? 'text-red-500' : 'text-orange-500'}`} />
+              <ShieldAlert className={`w-6 h-6 ${(selectedIncident.ai_priority || selectedIncident.severity) === 'CRITICAL' ? 'text-red-500' : 'text-orange-500'}`} />
               <div>
                 <h2 className="text-xl font-bold text-slate-100">{selectedIncident.type}</h2>
                 <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
@@ -227,6 +309,30 @@ export default function CommandCenter() {
                 </div>
               </div>
             </div>
+
+            {/* AI Priority Banner */}
+            <div className="bg-slate-950 border border-red-500/30 p-3 rounded-lg flex items-start gap-2.5">
+              <ShieldAlert className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>AI PRIORITY: {selectedIncident.ai_priority || selectedIncident.severity}</span>
+                </div>
+                <div className="text-xs text-slate-300 mt-1 leading-snug">
+                  {selectedIncident.ai_priority_reason || 'Emergency indicators detected from report telemetry.'}
+                </div>
+              </div>
+            </div>
+            
+            {/* Reporting Citizen Contact Number */}
+            {(selectedIncident.reporter_phone || (selectedIncident.reporter_phones && selectedIncident.reporter_phones.length > 0)) && (
+              <div>
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Reporting Citizen Contact</label>
+                <div className="flex items-center gap-2 text-xs text-slate-200 mt-1 font-mono bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
+                  <Phone className="w-4 h-4 text-green-400 flex-shrink-0" />
+                  <span>📱 {selectedIncident.reporter_phones?.join(', ') || selectedIncident.reporter_phone}</span>
+                </div>
+              </div>
+            )}
             
             <div>
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Location</label>
@@ -272,12 +378,12 @@ export default function CommandCenter() {
 
             <div>
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Incident Details</label>
-              <div className="bg-slate-950 border border-blue-500/20 p-3 rounded-lg mt-1 relative overflow-hidden">
+              <div className="bg-slate-950 border border-blue-500/20 p-3 rounded-lg mt-1 relative overflow-hidden space-y-2">
                 <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
                 <p className="text-sm text-blue-200">{selectedIncident.description}</p>
-                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-blue-500/10">
-                  <Users className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs text-slate-400">{selectedIncident.reports_count} duplicate reports consolidated</span>
+                <div className="flex items-center gap-2 pt-2 border-t border-blue-500/10">
+                  <Users className="w-4 h-4 text-purple-400" />
+                  <span className="text-xs text-purple-300 font-semibold">{selectedIncident.reports_count} duplicate report(s) consolidated</span>
                 </div>
               </div>
             </div>

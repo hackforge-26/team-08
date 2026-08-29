@@ -22,6 +22,7 @@ export async function syncPendingIncidents(): Promise<{ syncedCount: number; err
       formData.append('description', item.description);
       formData.append('created_at', item.created_at);
       if (item.reporter_email) formData.append('reporter_email', item.reporter_email);
+      if (item.reporter_phone) formData.append('reporter_phone', item.reporter_phone);
       formData.append('lat', item.lat.toString());
       formData.append('lng', item.lng.toString());
 

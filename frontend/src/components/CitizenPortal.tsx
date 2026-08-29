@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Camera, MapPin, Mic, Send, AlertTriangle, X, ExternalLink, Loader2, Check, Image as ImageIcon } from 'lucide-react';
+import { Camera, MapPin, Mic, Send, AlertTriangle, X, ExternalLink, Loader2, Check, Image as ImageIcon, Phone } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { saveOfflineIncident, type OfflineIncident } from '../utils/offlineStore';
 
@@ -7,6 +7,9 @@ export default function CitizenPortal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [isOfflineSaved, setIsOfflineSaved] = useState(false);
+  
+  // Citizen Contact state
+  const [reporterPhone, setReporterPhone] = useState('');
   
   // Audio recording states
   const [isRecording, setIsRecording] = useState(false);
@@ -239,6 +242,7 @@ export default function CitizenPortal() {
         lat: coords ? coords.lat : 40.7128,
         lng: coords ? coords.lng : -74.0060,
         reporter_email: email || undefined,
+        reporter_phone: reporterPhone || undefined,
         photo_blob: photoFile,
         photo_name: photoFile?.name,
         audio_blob: audioBlob,
@@ -261,6 +265,7 @@ export default function CitizenPortal() {
     formData.append('description', description);
     formData.append('created_at', nowIso);
     if (email) formData.append('reporter_email', email);
+    if (reporterPhone) formData.append('reporter_phone', reporterPhone);
     
     if (coords) {
       formData.append('lat', coords.lat.toString());
@@ -393,6 +398,21 @@ export default function CitizenPortal() {
                   <option>Complaint / General Issue</option>
                   <option>Other</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">Citizen Mobile Contact Number</label>
+                <div className="relative">
+                  <Phone className="w-5 h-5 text-slate-500 absolute left-3.5 top-3.5" />
+                  <input 
+                    type="tel"
+                    value={reporterPhone}
+                    onChange={(e) => setReporterPhone(e.target.value)}
+                    placeholder="+91 98765 43210"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-11 pr-4 py-3 text-slate-200 focus:outline-none focus:border-blue-500 transition-colors"
+                    required
+                  />
+                </div>
               </div>
 
               <div>

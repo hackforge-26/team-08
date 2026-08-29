@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -39,11 +39,12 @@ export default function LiveMap() {
   const [position, setPosition] = React.useState<[number, number] | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [incidents, setIncidents] = React.useState<any[]>([]);
+  const [disasterAlerts, setDisasterAlerts] = React.useState<any[]>([]);
   const defaultCenter: [number, number] = [40.7128, -74.0060]; // New York fallback
 
   React.useEffect(() => {
-    // Fetch live incidents
-    const fetchIncidents = async () => {
+    // Fetch live incidents & disaster alerts
+    const fetchData = async () => {
       try {
         const res = await fetch('http://localhost:8000/incidents');
         const data = await res.json();
@@ -51,9 +52,20 @@ export default function LiveMap() {
       } catch (err) {
         console.error("Failed to fetch incidents", err);
       }
+
+      try {
+        const alertRes = await fetch('http://localhost:8000/disaster-alerts');
+        if (alertRes.ok) {
+          const alertData = await alertRes.json();
+          setDisasterAlerts(alertData);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch disaster alerts", err);
+      }
     };
-    fetchIncidents();
-    const interval = setInterval(fetchIncidents, 3000);
+
+    fetchData();
+    const interval = setInterval(fetchData, 3000);
     
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -120,22 +132,49 @@ export default function LiveMap() {
           </Marker>
         )}
 
+        {/* Disaster Early-Warning Risk Overlays */}
+        {disasterAlerts.map((alert) => (
+          <Circle
+            key={alert.id}
+            center={[alert.lat, alert.lng]}
+            radius={alert.radius_km * 1000}
+            pathOptions={{
+              color: alert.risk_level === 'CRITICAL' ? '#ef4444' : '#f59e0b',
+              fillColor: alert.risk_level === 'CRITICAL' ? '#ef4444' : '#f59e0b',
+              fillOpacity: 0.15,
+              weight: 2,
+              dashArray: '6, 6'
+            }}
+          >
+            <Popup className="custom-popup">
+              <div className="p-1 text-slate-900">
+                <div className="font-bold text-amber-600 flex items-center gap-1 mb-1">
+                  <span>⚠️ AI EARLY WARNING</span>
+                </div>
+                <div className="font-bold">{alert.type} ({alert.risk_level} RISK)</div>
+                <div className="text-xs text-slate-600 mt-1">Area: {alert.area}</div>
+                <div className="text-xs text-slate-600">Confidence: {alert.confidence}</div>
+              </div>
+            </Popup>
+          </Circle>
+        ))}
+
         {incidents.map((incident) => (
           <Marker 
             key={incident.id} 
             position={[incident.location.lat, incident.location.lng]} 
-            icon={incident.severity === 'CRITICAL' || incident.severity === 'HIGH' ? criticalIcon : complaintIcon}
+            icon={(incident.ai_priority || incident.severity) === 'CRITICAL' || (incident.ai_priority || incident.severity) === 'HIGH' ? criticalIcon : complaintIcon}
           >
             <Popup className="custom-popup">
               <div className="p-1">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`px-2 py-0.5 text-xs font-bold rounded ${incident.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-500' : 'bg-purple-500/20 text-purple-600'}`}>
-                    {incident.severity}
+                  <span className={`px-2 py-0.5 text-xs font-bold rounded ${(incident.ai_priority || incident.severity) === 'CRITICAL' ? 'bg-red-500/20 text-red-500' : 'bg-purple-500/20 text-purple-600'}`}>
+                    {incident.ai_priority || incident.severity}
                   </span>
                   <span className="text-slate-900 font-bold">{incident.type}</span>
                 </div>
                 <p className="text-sm text-slate-700 mb-2">{incident.description}</p>
-                <div className="text-xs text-slate-500">Reports: {incident.reports_count}</div>
+                <div className="text-xs text-slate-500">Consolidated Reports: {incident.reports_count}</div>
               </div>
             </Popup>
           </Marker>
@@ -145,3 +184,4 @@ export default function LiveMap() {
     </div>
   );
 }
+
