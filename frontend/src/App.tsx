@@ -1,13 +1,17 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import { ShieldAlert, Activity, Map as MapIcon, Users } from 'lucide-react';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { ShieldAlert, Activity, Map as MapIcon, Users, Home, LayoutDashboard } from 'lucide-react';
 import CommandCenter from './components/CommandCenter';
 import LiveMap from './components/LiveMap';
 import CitizenPortal from './components/CitizenPortal';
 import CitizenDashboard from './components/CitizenDashboard';
+import LandingPage from './components/LandingPage';
+import AdminDashboard from './components/AdminDashboard';
+import LoginPage from './components/LoginPage';
 
 function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = React.useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const location = useLocation();
 
   React.useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -24,21 +28,62 @@ function DashboardLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen w-screen bg-slate-950 text-slate-50 overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
-        <div className="p-4 border-b border-slate-800 flex items-center gap-3">
+        <Link to="/" className="p-4 border-b border-slate-800 flex items-center gap-3 hover:bg-slate-850 transition-colors">
           <ShieldAlert className="w-8 h-8 text-red-500" />
-          <h1 className="text-xl font-bold tracking-wider">ResQAI</h1>
-        </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-wider">ResQAI</h1>
+            <p className="text-[10px] text-slate-400 font-mono">CRISIS SYSTEM</p>
+          </div>
+        </Link>
+
         <nav className="flex-1 p-4 space-y-2">
-          <Link to="/" className="flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-800/50 text-blue-400 hover:bg-slate-800 transition-colors">
-            <Activity className="w-5 h-5" />
+          <Link
+            to="/"
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
+              location.pathname === '/' ? 'bg-slate-800 text-slate-100 shadow-md' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+            }`}
+          >
+            <Home className="w-5 h-5 text-slate-400" />
+            <span>Home Landing</span>
+          </Link>
+
+          <Link
+            to="/admin"
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
+              location.pathname === '/admin' ? 'bg-slate-800 text-blue-400 shadow-md' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+            }`}
+          >
+            <LayoutDashboard className="w-5 h-5 text-blue-400" />
+            <span>Admin Dashboard</span>
+          </Link>
+
+          <Link
+            to="/dashboard"
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
+              location.pathname === '/dashboard' || location.pathname === '/command-center' ? 'bg-slate-800 text-red-400 shadow-md' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+            }`}
+          >
+            <Activity className="w-5 h-5 text-red-500" />
             <span>Command Center</span>
           </Link>
-          <Link to="/map" className="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-            <MapIcon className="w-5 h-5" />
-            <span>Live Map</span>
+
+          <Link
+            to="/map"
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
+              location.pathname === '/map' ? 'bg-slate-800 text-emerald-400 shadow-md' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+            }`}
+          >
+            <MapIcon className="w-5 h-5 text-emerald-400" />
+            <span>Live Weather Map</span>
           </Link>
-          <Link to="/report" className="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-            <Users className="w-5 h-5" />
+
+          <Link
+            to="/report"
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
+              location.pathname === '/report' ? 'bg-slate-800 text-amber-400 shadow-md' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+            }`}
+          >
+            <Users className="w-5 h-5 text-amber-400" />
             <span>Citizen Portal</span>
           </Link>
         </nav>
@@ -47,7 +92,9 @@ function DashboardLayout({ children }: { children: React.ReactNode }) {
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full relative">
         <header className="h-16 border-b border-slate-800 flex items-center px-6 justify-between bg-slate-900/50 backdrop-blur-md">
-          <h2 className="text-lg font-medium">System Dashboard</h2>
+          <h2 className="text-lg font-medium text-slate-200">
+            {location.pathname === '/admin' ? 'Admin Control Dashboard' : location.pathname === '/map' ? 'Subcontinent Live Weather Map' : 'Command Centre Console'}
+          </h2>
           <div className="flex items-center gap-3">
             {isOnline ? (
               <div className="flex items-center gap-2 text-green-400 border border-green-500/30 bg-green-500/10 px-3 py-1 rounded-full text-xs font-semibold">
@@ -75,11 +122,14 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<DashboardLayout><CommandCenter /></DashboardLayout>} />
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/admin" element={<DashboardLayout><AdminDashboard /></DashboardLayout>} />
         <Route path="/dashboard" element={<DashboardLayout><CommandCenter /></DashboardLayout>} />
+        <Route path="/command-center" element={<DashboardLayout><CommandCenter /></DashboardLayout>} />
         <Route path="/map" element={<DashboardLayout><LiveMap /></DashboardLayout>} />
         <Route path="/report" element={<CitizenPortal />} />
         <Route path="/citizen/dashboard" element={<CitizenDashboard />} />
+        <Route path="/login" element={<LoginPage />} />
       </Routes>
     </Router>
   );
